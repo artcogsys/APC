@@ -1,89 +1,17 @@
-peripheral vision can remain the same
-in practice only foveal focus changes
-how to combine these into a representation that can be used for updating the high res sensory representation?
-=> maybe represent periphery at high resolution as well?
-=> but location info? => encoded by fovea with rest zeros...
-- magno and parvo may also play a role: https://github.com/duguyue100/retina-simulation/wiki/OpenCV-Bioinspired-Module-Python-API
-
-- we also need to compute the error between the highres fovea and the internal representation
-- we should be able to make arbitrary eye movements and then suppress error (two objectives?
-
-- we can use very informed initializations; 
-
-- we want to add hierarchies of CGRUs to model natural image statistics; use cox for this
-
-- invest in GPU...
-
-- make prediction of patch (future saccade) and minimize that?
-
-- the solution should be independent of where we foveate
-
-- learn initial constant array for GRU
-
-- draw the model; start with forced models (e.g. periphery only; we need to know if stuff is learnt first
-
-- there seems to be nog gradient information if we only feed in peripheral information
-
-- move directly to video representation!
-
-- fix:
-
-8%|▊         | 75/1000 [00:41<08:31,  1.81it/s]/Users/u259147/anaconda3/envs/chainer-env/lib/python3.6/site-packages/chainer/functions/activation/clipped_relu.py:83: RuntimeWarning: invalid value encountered in greater
-  gy * (0 < self.x) * (self.x < self.cap), self.x.dtype),
-  
-  clipped relu gets weird value...
-  
-  /Users/u259147/anaconda3/envs/chainer-env/lib/python3.6/site-packages/chainer/functions/math/basic_math.py:385: RuntimeWarning: invalid value encountered in true_divide
-  return utils.force_array(x[0] / x[1]),
-/Users/u259147/anaconda3/envs/chainer-env/lib/python3.6/site-packages/chainer/functions/activation/clipped_relu.py:83: RuntimeWarning: invalid value encountered in greater
-  gy * (0 < self.x) * (self.x < self.cap), self.x.dtype),
-/Users/u259147/anaconda3/envs/chainer-env/lib/python3.6/site-packages/chainer/functions/activation/clipped_relu.py:83: RuntimeWarning: invalid value encountered in less
-  gy * (0 < self.x) * (self.x < self.cap), self.x.dtype),
-
-- add F.relu or f.sigmoid to self.R before passing to decoder!!
-
-- test older code; suddenly we have convergence issues! (or because we train for long enough now?)
-
-- ksize of CGRU has quite some effect (as do other architecture parameters!)
-
-- there is instability in the gradients of some of the pixels that feed into the clipped relu. So there must be stability
-issues in the decoder or in R, which feeds into the decoder.  Initialisation issues? Data issues? => SOLVED: SQRT PROBLEM
-
-- We could also just use foveal input and then use the comparison with peripheral vision as a loss signal. WE EVEN
-NEED TO: NOW WE COMPARE WITH GROUND TRUTH (?) FINE FOR TRAINING BUT NOT FOR BIOLOGICAL REALISM
-=> BLURRING FUNCTION APPLIED TO HIGH RES FOVEAL REPRESENTATION SHOULD LEAD TO LOW RES PERIPHERAL!!!
-
-Leren van initial condition zou bij Lena het plaatje moeten geven... We zouden een h_0 kunnen leren, of individuele
-biases aan alle hidden units kunnen geven of ...
-
-Doorbraak:
-- netwerk met high res internal representations moet zijn huidige en toekomstige foveal inputs voorspellen
-- peripheral input kan een extra bron zijn: blurring op de high res internal representation moet peripheral input teruggeven
-- dit werkt al onder random sampling
-- peripheral input error kan de source zijn voor waar onze volgende saccade moet plaatsvinden.
-
-
-IMPORTANT:
-- for video dynamic input; if things change then past (or future) foveal inputs need not be relevant! The current 
-  internal representations should just predict (1) current foveal input and (2) current peripheral input (kernel function applied to high res representation)
-
-To do:
-- GPU implementatie
-- Nadenken over Doorbraak representaties en implementeren
-- Testen op video input (dat is uiteindelijk waar de interesse ligt)
-- Toevoegen van meerdere lagen
-- In hoeverre is dit anders dan Cox behalve dat de future frames de future saccades zijn?
-- add physical constraints (saccade speed cf. frame speed)
-
 CURRENT MODEL:
 
 - MODEL RECEIVES FOVEAL INPUT ONLY
 - MODEL MINIMIZES DIFFERENCE BETWEEN INTERNAL REPRESENTATION AT t-1 and FOVEAL INPUT AT t
 - MODEL USES PERIPHERAL REPRESENTATION TO DECIDE ON NEXT SACCADE (BLURRED VERSION OF HIGH RES REPRESENTATION)
 
-TODO:
-FILL IN HIGH LEVEL
-MICRO SACC
-PHYS CONSTRAINTS
-COLOR
-ETC
+To do:
+- werk aan GPU implementatie
+- Testen op video input (test_video startpunt; test color representations)
+- Toevoegen van meerdere lagen (a la Cox) => leren we voorspellen beyond de geziene foveations?
+
+- add physical constraints (saccade speed cf. frame speed)
+- performance testing; dependence on various parameters
+- compare with biological vision; saccade patterns; development of saccade patterns etc
+- think harder about sensory constraints (organization of retina etc; and what we can learn)
+- can we have topography emerge by assuming distance constraints (conflicts with CNN though)
+
