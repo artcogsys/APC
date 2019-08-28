@@ -1,4 +1,4 @@
-from chainer import Chain
+from chainer import Chain, ChainList
 from CGRU import CGRU2D
 import chainer.links as L
 import matplotlib.pyplot as plt
@@ -12,12 +12,15 @@ DEBUG = True
 
 class APCModel(Chain):
 
-    def __init__(self, nhidden, nout):
+    def __init__(self, nhidden, nout, nlayers=1):
         """
         :param nhidden: number of hidden channels
         :param nout: number of output (image) channels
+        :param nlayers: number of layers for predictive coding model
         """
         super().__init__()
+
+        self.nlayers = nlayers
 
         # maintain input representations
         self.fovea = None
@@ -32,8 +35,12 @@ class APCModel(Chain):
 
         with self.init_scope():
 
-            self.R = CGRU2D(out_channels=nhidden, ksize=1)
-            self.decoder = L.Deconvolution2D(in_channels=None, out_channels=nout, ksize=3, pad=int((3 - 1) / 2))
+            self.R = ChainList()
+            self.Ahat = ChainList()
+
+            for l in range(self.nlayers):
+                self.R.append(CGRU2D(out_channels=nhidden, ksize=1))
+                self.Ahat.append(L.Deconvolution2D(in_channels=None, out_channels=nout, ksize=3, pad=int((3 - 1) / 2)))
 
         self.optimizer = chainer.optimizers.Adam()  # other learning rate?
         self.optimizer.setup(self)
@@ -61,14 +68,22 @@ class APCModel(Chain):
         # build up peripheral input
         self.periphery = F.average_pooling_2d(x.astype(np.float32), ksize=self.blur, pad=int((self.blur-1)/2), stride=1).data
 
-        # use both fovea and periphery
-        # return F.clipped_relu(self.decoder(F.relu(self.R(np.concatenate([self.fovea, self.periphery], axis=1)))), 1.0)
+        # only use fovea as sensory input
+        return F.clipped_relu(self.Ahat[0](F.relu(self.R[0](self.fovea))), 1.0)
 
-        # only use fovea
-        return F.clipped_relu(self.decoder(F.relu(self.R(self.fovea))), 1.0)
+        # TO DO IF WE WANT TO CREATE DEEPER NETWORKS
+        # EITHER PREDNET OR JUST ADDING MULTIPLE LAYERS OF REPRESENTATION (FOR WHICH WE CAN COMPARE WITH PERIPHERY AT THEIR SCALE)
+
+        # top-down pass
+        # E =
+        # for l in range(self.nlayers-1,-1,-1):
+        #     R = self.R(E, R)
+
+        # bottom-up pass
+
 
     def reset_state(self):
-        self.R.reset_state()
+        [x.reset_state() for x in self.R]
 
     def sample_position(self, mode='random', nx=None, ny=None, batch_size = None, error=None):
 

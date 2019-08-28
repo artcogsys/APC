@@ -2,10 +2,8 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="72c55f00-6a85-4605-9569-20d94eef7b36" name="Default Changelist" comment="">
-      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/notes" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/apc.py" beforeDir="false" afterPath="$PROJECT_DIR$/apc.py" afterDir="false" />
     </list>
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
     <option name="SHOW_DIALOG" value="false" />
@@ -136,8 +134,8 @@
     <recent_temporary>
       <list>
         <item itemvalue="Python.test_video" />
-        <item itemvalue="Python.test_vim1" />
         <item itemvalue="Python.test_lena" />
+        <item itemvalue="Python.test_vim1" />
         <item itemvalue="Python.main" />
       </list>
     </recent_temporary>
@@ -160,7 +158,9 @@
       <map>
         <entry key="MAIN">
           <value>
-            <State />
+            <State>
+              <option name="COLUMN_ORDER" />
+            </State>
           </value>
         </entry>
       </map>
@@ -186,7 +186,7 @@
         </line-breakpoint>
         <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
           <url>file://$PROJECT_DIR$/apc.py</url>
-          <line>165</line>
+          <line>180</line>
           <option name="timeStamp" value="101" />
         </line-breakpoint>
       </breakpoints>
