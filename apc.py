@@ -4,6 +4,8 @@ import chainer.links as L
 import matplotlib.pyplot as plt
 import numpy as np
 import chainer
+from chainer.backends import cuda
+import cupy as cp
 import tqdm
 import chainer.functions as F
 from chainer import Variable
@@ -12,7 +14,7 @@ DEBUG = True
 
 class APCModel(Chain):
 
-    def __init__(self, nhidden, nout, nlayers=1):
+    def __init__(self, nhidden, nout, nlayers=1, device=None):
         """
         :param nhidden: number of hidden channels
         :param nout: number of output (image) channels
@@ -21,7 +23,9 @@ class APCModel(Chain):
         super().__init__()
 
         self.nlayers = nlayers
-
+        # check if model should be run on gpu
+        self.gpu = device
+        
         # maintain input representations
         self.fovea = None
         self.periphery = None
@@ -39,8 +43,12 @@ class APCModel(Chain):
             self.Ahat = ChainList()
 
             for l in range(self.nlayers):
-                self.R.append(CGRU2D(out_channels=nhidden, ksize=1))
-                self.Ahat.append(L.Deconvolution2D(in_channels=None, out_channels=nout, ksize=3, pad=int((3 - 1) / 2)))
+                if device != None:
+                    self.R.append(CGRU2D(out_channels=nhidden, ksize=1, device=self.gpu))
+                    self.Ahat.append(L.Deconvolution2D(in_channels=None, out_channels=nout, ksize=3, pad=int((3 - 1) / 2)).to_gpu())
+                else:
+                    self.R.append(CGRU2D(out_channels=nhidden, ksize=1))
+                    self.Ahat.append(L.Deconvolution2D(in_channels=None, out_channels=nout, ksize=3, pad=int((3 - 1) / 2)))
 
         self.optimizer = chainer.optimizers.Adam()  # other learning rate?
         self.optimizer.setup(self)
@@ -64,12 +72,14 @@ class APCModel(Chain):
             cy = pos[i,1]
             self.fovea[i,:,(cx-self.rx):(cx+self.rx+1), (cy-self.ry):(cy+self.ry+1)] = x[i,:,(cx-self.rx):(cx+self.rx+1), (cy-self.ry):(cy+self.ry+1)]
             self.mask[i, :, (cx - self.rx):(cx + self.rx + 1), (cy - self.ry):(cy + self.ry + 1)] = 1
-
+        if self.gpu != None: # put on gpu if enabled
+            self.fovea = cuda.to_gpu(self.fovea)
         # build up peripheral input
         self.periphery = F.average_pooling_2d(x.astype(np.float32), ksize=self.blur, pad=int((self.blur-1)/2), stride=1).data
 
         # only use fovea as sensory input
-        return F.clipped_relu(self.Ahat[0](F.relu(self.R[0](self.fovea))), 1.0)
+        res = F.clipped_relu(self.Ahat[0](F.relu(self.R[0](self.fovea))), 1.0)
+        return res
 
         # TO DO IF WE WANT TO CREATE DEEPER NETWORKS
         # EITHER PREDNET OR JUST ADDING MULTIPLE LAYERS OF REPRESENTATION (FOR WHICH WE CAN COMPARE WITH PERIPHERY AT THEIR SCALE)
@@ -136,17 +146,22 @@ class APCModel(Chain):
         self.imgs = imgs
 
     def plot_graphics(self, x, error, z):
-
+        if self.gpu != None:
+            self.fovea = cuda.to_cpu(self.fovea)
+            z_plot = cuda.to_cpu(z[0].data)
+        else:
+            z_plot = z[0].data
         d = []
         d.append(np.squeeze(np.moveaxis(x, 0, -1)))
         d.append(np.squeeze(np.moveaxis(self.fovea[0], 0, -1)))
         d.append(np.squeeze(np.moveaxis(self.periphery[0], 0, -1)))
         d.append(error)
-        d.append(np.squeeze(np.moveaxis(z[0].data, 0, -1)))
+        d.append(np.squeeze(np.moveaxis(z_plot, 0, -1)))
         for i in range(5):
             self.imgs[i].set_data(d[i])
         plt.draw()
         plt.pause(0.001)
+        self.fovea = cuda.to_gpu(self.fovea)
 
     def update_graphics(self, x, y):
         self.hl.set_xdata(x)
@@ -163,7 +178,9 @@ class APCModel(Chain):
         :param cutoff:
         :return:
         """
-
+        if self.gpu != None:
+            self.to_gpu()
+            
         if cutoff is None:
             cutoff = ds.ntime
 
@@ -177,8 +194,10 @@ class APCModel(Chain):
             for e in tqdm.trange(nepochs):
 
                 for x in ds:
-
-                    loss = Variable(np.array([0.0]).astype(np.float32))
+                    if self.gpu != None:
+                        loss = Variable(cuda.to_gpu(np.array([0.0]).astype(np.float32)))
+                    else:
+                        loss = Variable(np.array([0.0]).astype(np.float32))
 
                     # reset model at start of each sequence
                     self.reset_state()
@@ -194,7 +213,8 @@ class APCModel(Chain):
 
                         # compute predicted high-resolution internal representation from foveal and/or peripheral representations
                         z[idx] = self(x[:,:,t,...], pos)
-
+                        # put fovea back on cpu
+                        #self.fovea = cp.asnumpy(self.fovea)
                         # minimize error between all past (and current) representations and the current foveated patch
                         for u in range(idx + 1):
                             foveal_error = F.mean(F.absolute_error(z[u][self.mask], self.fovea[self.mask]))
@@ -202,29 +222,39 @@ class APCModel(Chain):
 
                         # get peripheral error
                         zb = F.average_pooling_2d(z[idx], ksize=self.blur, pad=int((self.blur - 1) / 2), stride=1)
+                        zb.to_cpu()
                         peripheral_error = F.mean(F.absolute_error(zb, self.periphery), axis=1)
                         # loss += F.mean(peripheral_error)
-
-                        L[e] += loss.data
+                        
+                        if self.gpu != None:
+                            loss.to_cpu()
+                            L[e] += loss.data
+                            loss.to_gpu()
+                        else:
+                            L[e] += loss.data
 
                         if DEBUG:
-                            self.plot_graphics(x[0, :, t, ...], peripheral_error[0].data, z[idx])
+                            z_idx = z[idx]
+                            self.plot_graphics(x[0, :, t, ...], peripheral_error[0].data, z_idx)
                             self.fig.suptitle('epoch ' + str(e) + '/' + str(nepochs) + '; example ' + str(ds.batch_idx) +
                                          '/' + str(ds.nbatch) + '; timestep ' + str(t + 1) + '/' + str(ds.ntime))
 
                         idx += 1
-
+                       
                         if idx == cutoff:
 
                             self.cleargrads()
                             loss.backward()
                             loss.unchain_backward()
                             self.optimizer.update()
-
+                           
                             idx = 0
                             z = [None] * cutoff
-                            loss = Variable(np.array([0.0]).astype(np.float32))
-
+                            if self.gpu != None:
+                                loss = Variable(cuda.to_gpu(np.array([0.0]).astype(np.float32)))
+                            else:
+                                loss = Variable(np.array([0.0]).astype(np.float32))
+                     
                         # determine new position based on peripheral vision
                         pos = self.sample_position(mode='error', error=peripheral_error)
 

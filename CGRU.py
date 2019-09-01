@@ -6,20 +6,29 @@ from chainer import Variable
 import numpy as np
 
 class CGRU2D(Chain):
-    def __init__(self, out_channels, ksize):
+    def __init__(self, out_channels, ksize, device=None):
         super(CGRU2D, self).__init__()
-
         pad = int((ksize - 1) / 2)
 
         with self.init_scope():
-            self.U_h = L.Convolution2D(out_channels, out_channels, ksize, pad=pad)
-            self.U_r = L.Convolution2D(out_channels, out_channels, ksize, pad=pad)
-            self.U_z = L.Convolution2D(out_channels, out_channels, ksize, pad=pad)
-            self.W_h = L.Convolution2D(None, out_channels, ksize, pad=pad)
-            self.W_r = L.Convolution2D(None, out_channels, ksize, pad=pad)
-            self.W_z = L.Convolution2D(None, out_channels, ksize, pad=pad)
+            if device != None:
+                self.U_h = L.Convolution2D(out_channels, out_channels, ksize, pad=pad).to_gpu()
+                self.U_r = L.Convolution2D(out_channels, out_channels, ksize, pad=pad).to_gpu()
+                self.U_z = L.Convolution2D(out_channels, out_channels, ksize, pad=pad).to_gpu()
+                self.W_h = L.Convolution2D(None, out_channels, ksize, pad=pad).to_gpu()
+                self.W_r = L.Convolution2D(None, out_channels, ksize, pad=pad).to_gpu()
+                self.W_z = L.Convolution2D(None, out_channels, ksize, pad=pad).to_gpu()
+            else:
+                self.U_h = L.Convolution2D(out_channels, out_channels, ksize, pad=pad)
+                self.U_r = L.Convolution2D(out_channels, out_channels, ksize, pad=pad)
+                self.U_z = L.Convolution2D(out_channels, out_channels, ksize, pad=pad)
+                self.W_h = L.Convolution2D(None, out_channels, ksize, pad=pad)
+                self.W_r = L.Convolution2D(None, out_channels, ksize, pad=pad)
+                self.W_z = L.Convolution2D(None, out_channels, ksize, pad=pad)
 
         self.reset_state()
+        if device != None:
+            self.to_gpu(device)
 
     def forward(self, x):
 
