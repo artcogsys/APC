@@ -4,6 +4,10 @@ CURRENT MODEL:
 - MODEL MINIMIZES DIFFERENCE BETWEEN INTERNAL REPRESENTATION AT t-1 and FOVEAL INPUT AT t
 - MODEL USES PERIPHERAL REPRESENTATION TO DECIDE ON NEXT SACCADE (BLURRED VERSION OF HIGH RES REPRESENTATION)
 - MODEL RUNS ON SINGLE GPU
+- MODEL NOW EXTENDED TO MULTIPLE LAYERS
+- ISSUE: Cannot add more than 3 layers right now due to error initialization problems
+
+
 To do:
 - werk aan GPU implementatie (werkt op single GPU)
 - Testen op video input (test_video startpunt; test color representations)
