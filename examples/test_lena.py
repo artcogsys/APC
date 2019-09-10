@@ -41,10 +41,9 @@ data = np.repeat(np.expand_dims(np.moveaxis(img, -1, 0).astype(np.float32), axis
 source = DataSource(data, ntime=ntime, batch_size=1)
 
 ## Train model
-if device != -1: # gpu enabled
-    model = APCModel(nhidden=nhidden, nout=source.data.shape[1],nlayers=nlayers, device=device)
-else:
-    model = APCModel(nhidden=nhidden, nout=source.data.shape[1], nlayers=nlayers)
+
+model = APCModel(nhidden=nhidden, nout=source.data.shape[1],nlayers=nlayers, device=device)
+
 
 L, L_E, MSE_f, MSE_m = model.train(source, nepochs=nepochs)
 

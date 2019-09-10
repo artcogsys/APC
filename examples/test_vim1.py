@@ -30,6 +30,6 @@ source = DataSource(data, ntime=ntime, batch_size=5)
 # number of image channels
 nout = source.data.shape[1]
 
-model = APCModel(nhidden=10, nout=nout)
+model = APCModel(nhidden=10, nout=nout, device=device)
 
 model.train(source, nepochs=1000)

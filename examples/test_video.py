@@ -46,10 +46,9 @@ source = DataSource(data, ntime=nexamples, batch_size=1)
 
 ## Train model
 ## Train model
-if device != -1: # gpu enabled
-    model = APCModel(nhidden=100, nout=1, nlayers=nlayers, device=device) # operating on grayscale
-else:
-    model = APCModel(nhidden=100, nout=1, nlayers=nlayers) # operating on grayscale
+
+model = APCModel(nhidden=100, nout=1, nlayers=nlayers, device=device) # operating on grayscale
+
 
 L, L_E, MSE_f, MSE_m = model.train(source, nepochs=nepochs, cutoff=25)
 plt.figure(2, figsize=(7,7))
