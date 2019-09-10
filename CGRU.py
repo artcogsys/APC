@@ -6,28 +6,20 @@ from chainer import Variable
 import numpy as np
 
 class CGRU2D(Chain):
-    def __init__(self, out_channels, ksize, device=None):
+    def __init__(self, out_channels, ksize, device=-1):
         super(CGRU2D, self).__init__()
         pad = int((ksize - 1) / 2)
 
         with self.init_scope():
-            if device != None:
-                self.U_h = L.Convolution2D(out_channels, out_channels, ksize, pad=pad).to_gpu()
-                self.U_r = L.Convolution2D(out_channels, out_channels, ksize, pad=pad).to_gpu()
-                self.U_z = L.Convolution2D(out_channels, out_channels, ksize, pad=pad).to_gpu()
-                self.W_h = L.Convolution2D(None, out_channels, ksize, pad=pad).to_gpu()
-                self.W_r = L.Convolution2D(None, out_channels, ksize, pad=pad).to_gpu()
-                self.W_z = L.Convolution2D(None, out_channels, ksize, pad=pad).to_gpu()
-            else:
-                self.U_h = L.Convolution2D(out_channels, out_channels, ksize, pad=pad)
-                self.U_r = L.Convolution2D(out_channels, out_channels, ksize, pad=pad)
-                self.U_z = L.Convolution2D(out_channels, out_channels, ksize, pad=pad)
-                self.W_h = L.Convolution2D(None, out_channels, ksize, pad=pad)
-                self.W_r = L.Convolution2D(None, out_channels, ksize, pad=pad)
-                self.W_z = L.Convolution2D(None, out_channels, ksize, pad=pad)
+            self.U_h = L.Convolution2D(out_channels, out_channels, ksize, pad=pad)
+            self.U_r = L.Convolution2D(out_channels, out_channels, ksize, pad=pad)
+            self.U_z = L.Convolution2D(out_channels, out_channels, ksize, pad=pad)
+            self.W_h = L.Convolution2D(None, out_channels, ksize, pad=pad)
+            self.W_r = L.Convolution2D(None, out_channels, ksize, pad=pad)
+            self.W_z = L.Convolution2D(None, out_channels, ksize, pad=pad)
 
         self.reset_state()
-        if device != None:
+        if device != -1:
             self.to_gpu(device)
 
     def forward(self, x):
@@ -56,12 +48,10 @@ class CGRU2D(Chain):
 
     def to_cpu(self):
         super(CGRU2D, self).to_cpu()
-
         if self.h is not None:
             self.h.to_cpu()
 
     def to_gpu(self, device=None):
         super(CGRU2D, self).to_gpu(device)
-
         if self.h is not None:
             self.h.to_gpu(device)

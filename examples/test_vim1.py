@@ -1,3 +1,5 @@
+import sys
+sys.path.append('..')
 from data import DataSource
 from PIL import Image
 import numpy as np
