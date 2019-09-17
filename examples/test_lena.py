@@ -6,11 +6,16 @@ import numpy as np
 import os
 from apc import APCModel
 import matplotlib.pyplot as plt
+plt.rcParams['axes.titlesize'] = 13
+plt.rcParams['axes.titleweight'] = 'bold'
+plt.rcParams['axes.labelsize'] = 12
+plt.rcParams['axes.labelweight'] = 'bold'
+from chainer import serializers
 
 # device to run model on set to -1 if you want to run it on the cpu
 device = 0
 # number of saccades per example
-ntime = 10
+ntime = 5
 # number of layers in model
 nlayers = 2
 # number of epochs
@@ -45,7 +50,7 @@ source = DataSource(data, ntime=ntime, batch_size=1)
 model = APCModel(nhidden=nhidden, nout=source.data.shape[1],nlayers=nlayers, device=device)
 
 
-L, L_E, MSE_f, MSE_m = model.train(source, nepochs=nepochs)
+L, L_E, MSE_f, MSE_m, L_w_rep = model.train(source, nepochs=nepochs)
 
 plt.figure(2, figsize=(7,7))
 plt.title('MSE of patched vs ' + str(nlayers)+ '-layer model')
@@ -56,7 +61,7 @@ plt.ylabel('MSE')
 plt.legend(['patched', 'model'])
 plt.show()
 plt.figure(3, figsize=(7,7))
-plt.title('layer-wise error of ' + str(nlayers)+ '-layer model')
+plt.title('layer-wise rep of ' + str(nlayers)+ '-layer model')
 for l in range(nlayers):
     plt.plot(np.arange(nepochs), L_E[:,l], label='layer '+ str(l+1))
 
@@ -64,3 +69,11 @@ plt.xlabel('number of epochs')
 plt.ylabel('layer-wise error')
 plt.legend()
 plt.show()
+# plot layer wise representations
+plt.subplots(1,nlayers, figsize=(12,5))
+plt.suptitle('Layer-wise Representations',)
+for l in range(nlayers):
+    plt.subplot(1,nlayers, l+1)
+    plt.title('layer: ' +str((l+1)))
+    plt.imshow(np.reshape(L_w_rep[l], (100,100)),cmap='gray')
+#serializers.save_npz('3l_lena_100u_model', model)

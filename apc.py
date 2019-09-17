@@ -23,6 +23,7 @@ class APCModel(Chain):
         super().__init__()
 
         self.nlayers = nlayers
+        self.nhidden = nhidden
         # check if model should be run on gpu
         self.gpu = device
        
@@ -38,13 +39,10 @@ class APCModel(Chain):
         self.blur = 11
 
         with self.init_scope():
-
             self.R = ChainList()
-            self.Ahat = ChainList()
             self.E = ChainList()
             for l in range(self.nlayers):
-                self.R.append(CGRU2D(out_channels=nhidden, ksize=1, device=self.gpu))
-                self.Ahat.append(L.Deconvolution2D(in_channels=None, out_channels=nout, ksize=3, pad=int((3 - 1) / 2)))
+                self.R.append(CGRU2D(out_channels=nhidden, ksize=1, device=self.gpu)) # alter kernelsize?
                 self.E.append(L.Convolution2D(in_channels=None, out_channels=nout, ksize=3, pad=int((3 - 1) / 2)))
                
                   
@@ -77,61 +75,46 @@ class APCModel(Chain):
          # build up peripheral input
         self.periphery = F.average_pooling_2d(x.astype(np.float32), ksize=self.blur, pad=int((self.blur-1)/2), stride=1).data
         
-        # Intialize Error populations, representations and predictions
-        Ahat = [None] * self.nlayers
-        A = [None] * self.nlayers
-        
+ 
         # Set first layer input to actual input
-
        
         for l in range(self.nlayers):
             if self.gpu != -1:
-                A[l] = cuda.to_gpu(np.zeros([nbatch,nchannels,int(nx/(2**l)), int(ny/(2**l))]).astype(np.float32))
-                Ahat[l] = cuda.to_gpu(np.zeros([nbatch,nchannels,int(nx/(2**l)), int(ny/(2**l))]).astype(np.float32))
+                R[l] = cuda.to_gpu(np.zeros([nbatch,self.nhidden,int(nx/(2**l)), int(ny/(2**l))]).astype(np.float32))
             else:
-                A[l] = np.zeros([nbatch,nchannels,int(nx/(2**l)), int(ny/(2**l))]).astype(np.float32)
-                Ahat[l] = np.zeros([nbatch,nchannels,int(nx/(2**l)), int(ny/(2**l))]).astype(np.float32)
-                
-        #A[0] = np.concatenate([self.fovea, self.periphery], axis=1)
-        A[0] = self.fovea
-        [batch,channels,x,y] = A[0].shape 
-    
+                R[l] = cuda.to_gpu(np.zeros([nbatch,self.nhidden,int(nx/(2**l)), int(ny/(2**l))]).astype(np.float32))
+            
         if self.gpu != -1: # put on gpu if enabled
             self.fovea = cuda.to_gpu(self.fovea)
-            A[0] = cuda.to_gpu(A[0])
-
+            self.periphery = cuda.to_gpu(self.periphery)
         # only use fovea as sensory input
         if self.nlayers == 1: #directly return prediction
-            res = F.clipped_relu(self.Ahat[0](F.relu(self.R[0](self.fovea))), 1.0)
+            res = F.clipped_relu(self.E[0](F.relu(self.R[0](self.fovea))), 1.0)
             return res, E, R
 
         # top-down pass
         for l in reversed(range(self.nlayers)):
             if l == self.nlayers - 1:
-                R[l] = self.R[l](E[l])
-                #R[l] = self.R[l](A[l])
+                downR = F.max_pooling_2d(self.E[l-1](R[l-1]), ksize=2, stride=2)
+                R[l] = self.R[l](downR)
+                
             elif l == 0:
-                upR = F.unpooling_2d(R[l+1],ksize=2,stride=2, cover_all=False)
+                upR = F.unpooling_2d(self.E[l+1](R[l+1]),ksize=2,stride=2, cover_all=False)
                 R[l] = self.R[l](F.concat((self.fovea,upR),axis=1))
             else:
-                upR = F.unpooling_2d(R[l+1],ksize=2,stride=2, cover_all=False)
-                R[l] = self.R[l](F.concat((E[l], upR),axis=1))
-                #R[l] = self.R[l](F.concat(A[l], upR))
-        
-        # bottom-up pass 
+                upR = F.unpooling_2d(self.E[l+1](R[l+1]),ksize=2,stride=2, cover_all=False)
+                downR = F.max_pooling_2d(self.E[l-1](R[l-1]), ksize=2, stride=2)
+                R[l] = self.R[l](F.concat((upR,downR),axis=1))
+      
+        # layer wise representations
+        Ahat = [None] * self.nlayers
         for l in range(self.nlayers):
-            if l == 0:
-                Ahat[l] = F.clipped_relu(self.Ahat[l](F.relu(R[l])), 1.0)
+            if l > 0:
+                R_unpooled = F.unpooling_2d(self.E[l](F.relu(R[l])), ksize=2*l, stride=2*l, cover_all=False)
+                Ahat[l] = F.clipped_relu(R_unpooled)# read out representation
             else:
-                Ahat[l] = self.Ahat[l](R[l])
-            E[l] = F.concat((F.relu(Ahat[l] - A[l]), F.relu(A[l] - Ahat[l])),axis=1)
-            #E[l] = F.absolute_error(Ahat[l], A[l])
-            if l < self.nlayers - 1:
-                A[l+1] = F.max_pooling_2d(self.E[l](E[l]), ksize=2, stride=2)
-                #A[l+1] = F.max_pooling_2d(Ahat[l], ksize=2, stride=2)        
-                
-        # return prediction at lowest level
-        return Ahat[0], E, R
+                Ahat[l] = F.clipped_relu(self.E[l](F.relu(R[l])))
+        return Ahat, E, R
         
 
     def reset_state(self):
@@ -219,8 +202,9 @@ class APCModel(Chain):
         self.imgs = imgs
 
     def plot_graphics(self, x, error, z):
-        if self.gpu != None:
+        if self.gpu != 1:
             self.fovea = cuda.to_cpu(self.fovea)
+            self.periphery = cuda.to_cpu(self.periphery)
             z_plot = cuda.to_cpu(z[0].data)
         else:
             z_plot = z[0].data
@@ -235,6 +219,7 @@ class APCModel(Chain):
         plt.draw()
         plt.pause(0.001)
         self.fovea = cuda.to_gpu(self.fovea)
+        self.periphery = cuda.to_gpu(self.periphery)
 
     def update_graphics(self, x, y,f,m):
         self.hl.set_xdata(x)
@@ -256,7 +241,7 @@ class APCModel(Chain):
             cutoff = ds.ntime
 
         L, L_E, MSE_f, MSE_m = np.zeros(nepochs), np.zeros((nepochs,self.nlayers)), np.zeros(nepochs), np.zeros(nepochs)
-
+        l_w_rep = [None] * self.nlayers # record final layer representations
         if DEBUG:
             self.init_graphics(shape=np.squeeze(np.moveaxis(ds.data[0, :, 0, ...], 0, -1)).shape)
 
@@ -294,8 +279,11 @@ class APCModel(Chain):
                                 E[l] = np.zeros([nbatch,nchannels,int(nx/(2**l)), int(ny/(2**l))]).astype(np.float32)
                         # compute predicted high-resolution internal representation from foveal and/or peripheral representations
                         z[idx], E, R = self(inputs, pos, E, R)
-                        z_data = z[idx].data
+                        z_data = z[idx][0].data
                         z_data = cuda.to_cpu(z_data)
+                        if e == nepochs - 1:
+                            for l in range(self.nlayers):
+                                l_w_rep[l] = cuda.to_cpu(z[idx][l].data)
                         # record predictions, result will hold prediction after final saccade of the trial
                         predictions[i,:,:,:,:] = z_data
                         # record layer-wise error
@@ -303,20 +291,18 @@ class APCModel(Chain):
                             errors[l,t] = F.mean(E[l]).data
                             
                         # minimize error between all past (and current) representations and the current foveated patch
-                        for u in range(idx + 1):
-                            foveal_error = F.mean(F.absolute_error(z[u][self.mask], self.fovea[self.mask]))
-                            # only take error from lowest layer (Cox 2016)
-                            #foveal_error = F.mean(errors[u][0])
+                        for u in range(idx):
+                            foveal_error = F.mean(F.absolute_error(z[u][0][self.mask], self.fovea[self.mask]))
                             loss += F.mean(foveal_error)
                             # integrate layer wise loss 
                             #loss += np.sum(errors[:,u])
 
                         # get peripheral error
-                        zb = F.average_pooling_2d(z[idx], ksize=self.blur, pad=int((self.blur - 1) / 2), stride=1)
-                        zb.to_cpu()
+                        zb = F.average_pooling_2d(z[idx][0], ksize=self.blur, pad=int((self.blur - 1) / 2), stride=1)
+                        #zb.to_cpu()
                         peripheral_error = F.mean(F.absolute_error(zb, self.periphery), axis=1)
-                        # loss += F.mean(peripheral_error)
-                        
+                        #loss += F.mean(peripheral_error)
+                        peripheral_error.to_cpu()
                         if self.gpu != -1:
                             loss.to_cpu()
                             L[e] += loss.data
@@ -325,7 +311,7 @@ class APCModel(Chain):
                             L[e] += loss.data
 
                         if DEBUG:
-                            z_idx = z[idx]
+                            z_idx = z[idx][0]
                             self.plot_graphics(x[0, :, t, ...], peripheral_error[0].data, z_idx)
                             self.fig.suptitle('epoch ' + str(e) + '/' + str(nepochs) + '; example ' + str(ds.batch_idx) +
                                          '/' + str(ds.nbatch) + '; timestep ' + str(t + 1) + '/' + str(ds.ntime))
@@ -358,4 +344,4 @@ class APCModel(Chain):
                 if DEBUG:
                     self.update_graphics(np.arange(e + 1), L[:(e + 1)], MSE_f[:(e + 1)], MSE_m[:(e+1)])
 
-        return L, L_E, MSE_f, MSE_m
+        return L, L_E, MSE_f, MSE_m, l_w_rep

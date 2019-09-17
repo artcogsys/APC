@@ -50,7 +50,7 @@ source = DataSource(data, ntime=nexamples, batch_size=1)
 model = APCModel(nhidden=100, nout=1, nlayers=nlayers, device=device) # operating on grayscale
 
 
-L, L_E, MSE_f, MSE_m = model.train(source, nepochs=nepochs, cutoff=25)
+L, L_E, MSE_f, MSE_m, L_w_rep = model.train(source, nepochs=nepochs, cutoff=25)
 plt.figure(2, figsize=(7,7))
 plt.title('MSE of patched vs ' + str(nlayers)+ '-layer model')
 plt.plot(np.arange(nepochs),MSE_f)
@@ -68,7 +68,15 @@ plt.xlabel('number of epochs')
 plt.ylabel('layer-wise error')
 plt.legend()
 plt.show()
-serializers.save_npz('3l_100u_model', model)
+
+# plot layer wise representations
+plt.subplots(1,nlayers, figsize=(12,5))
+plt.suptitle('Layer-wise Representations',)
+for l in range(nlayers):
+    plt.subplot(1,nlayers, l+1)
+    plt.title('layer: ' +str((l+1)))
+    plt.imshow(np.reshape(L_w_rep[l], (100,100)),cmap='gray')
+serializers.save_npz('models/3l_100u2_model', model)
 
 
 
