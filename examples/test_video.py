@@ -25,7 +25,7 @@ hpercent = height / float(fheight)
 width = int((float(fwidth) * float(hpercent)))
 
 #cap = cv2.VideoCapture('../data/Samsung UHD Sample (Nature) [2160p 4k].mp4')
-cap = cv2.VideoCapture('../data/samsung-uhd-iceland-(www.uhdsample.com).mkv')
+cap = cv2.VideoCapture('../data/samsung-uhd-iceland.mkv')
 
 nexamples = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 nexamples = 300
@@ -59,6 +59,7 @@ plt.xlabel('number of epochs')
 plt.ylabel('MSE')
 plt.legend(['patched', 'model'])
 plt.show()
+plt.savefig('../figures/patchedvsmodel.png')
 plt.figure(3, figsize=(7,7))
 plt.title('layer-wise error of ' + str(nlayers)+ '-layer model')
 for l in range(nlayers):
@@ -68,15 +69,19 @@ plt.xlabel('number of epochs')
 plt.ylabel('layer-wise error')
 plt.legend()
 plt.show()
+plt.savefig('../figures/layer_wise_error.png')
 
 # plot layer wise representations
+nx,ny = L_w_rep[0].shape[2], L_w_rep[0].shape[3]
 plt.subplots(1,nlayers, figsize=(12,5))
-plt.suptitle('Layer-wise Representations',)
+plt.suptitle('Layer-wise Representations')
 for l in range(nlayers):
     plt.subplot(1,nlayers, l+1)
     plt.title('layer: ' +str((l+1)))
-    plt.imshow(np.reshape(L_w_rep[l], (100,100)),cmap='gray')
-serializers.save_npz('models/3l_100u2_model', model)
+    plt.imshow(np.reshape(L_w_rep[l], (nx,ny)),cmap='gray')
+    
+plt.savefig('../figures/layer_wise.png')
+serializers.save_npz('../models/3l_100u2_model', model)
 
 
 

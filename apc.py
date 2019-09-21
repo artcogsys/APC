@@ -4,8 +4,8 @@ import chainer.links as L
 import matplotlib.pyplot as plt
 import numpy as np
 import chainer
+from chainer import serializers
 from chainer.backends import cuda
-import cupy as cp
 import tqdm
 import chainer.functions as F
 from chainer import Variable
@@ -92,7 +92,7 @@ class APCModel(Chain):
             res = F.clipped_relu(self.E[0](F.relu(self.R[0](self.fovea))), 1.0)
             return res, E, R
 
-        # top-down pass
+        # update states
         for l in reversed(range(self.nlayers)):
             if l == self.nlayers - 1:
                 downR = F.max_pooling_2d(self.E[l-1](R[l-1]), ksize=2, stride=2)
@@ -291,9 +291,18 @@ class APCModel(Chain):
                             errors[l,t] = F.mean(E[l]).data
                             
                         # minimize error between all past (and current) representations and the current foveated patch
-                        for u in range(idx):
-                            foveal_error = F.mean(F.absolute_error(z[u][0][self.mask], self.fovea[self.mask]))
+                        #for u in range(idx):
+                            #for l in range(self.nlayers):
+                                #if l == 0:
+                        if idx > 0:
+                            foveal_error = F.mean(F.absolute_error(z[idx-1][0][self.mask], self.fovea[self.mask]))
                             loss += F.mean(foveal_error)
+                        else:
+                            foveal_error = F.mean(F.absolute_error(z[idx][0][self.mask], self.fovea[self.mask]))
+                            loss += F.mean(foveal_error)
+                                #else:
+                                    #layer_error = (1/l)*F.mean(F.absolute_error(z[u][l][self.mask], z[u][l-1][self.mask]))
+                                    #loss += F.mean(layer_error)
                             # integrate layer wise loss 
                             #loss += np.sum(errors[:,u])
 
@@ -343,5 +352,7 @@ class APCModel(Chain):
                     L_E[e,l] = np.sum(errors[l,:])
                 if DEBUG:
                     self.update_graphics(np.arange(e + 1), L[:(e + 1)], MSE_f[:(e + 1)], MSE_m[:(e+1)])
+                    #serializers.save_npz('../models/3l_100u2_mid_model', self)
+
 
         return L, L_E, MSE_f, MSE_m, l_w_rep

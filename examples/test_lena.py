@@ -21,7 +21,7 @@ nlayers = 2
 # number of epochs
 nepochs = 1000
 # hidden units in each module
-nhidden = 100
+nhidden = 10
 ## prepare data
 
 # load and resize image
