@@ -82,7 +82,7 @@ class APCModel(Chain):
             if self.gpu != -1:
                 R[l] = cuda.to_gpu(np.zeros([nbatch,self.nhidden,int(nx/(2**l)), int(ny/(2**l))]).astype(np.float32))
             else:
-                R[l] = cuda.to_gpu(np.zeros([nbatch,self.nhidden,int(nx/(2**l)), int(ny/(2**l))]).astype(np.float32))
+                R[l] = np.zeros([nbatch,self.nhidden,int(nx/(2**l)), int(ny/(2**l))]).astype(np.float32)
             
         if self.gpu != -1: # put on gpu if enabled
             self.fovea = cuda.to_gpu(self.fovea)

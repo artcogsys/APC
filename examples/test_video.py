@@ -12,9 +12,9 @@ import tqdm
 import matplotlib.pyplot as plt
 
 # device to run model on set to -1 to run on cpu
-device = 0
+device = -1
 # number of layers
-nlayers= 3
+nlayers= 2
 # number of epochs
 nepochs = 1000
 # video source

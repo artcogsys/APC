@@ -13,7 +13,7 @@ plt.rcParams['axes.labelweight'] = 'bold'
 from chainer import serializers
 
 # device to run model on set to -1 if you want to run it on the cpu
-device = 0
+device = -1
 # number of saccades per example
 ntime = 5
 # number of layers in model
