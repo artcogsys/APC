@@ -21,7 +21,9 @@ class APCModel(Chain):
         :param nlayers: number of layers for predictive coding model
         """
         super().__init__()
-
+        # check availability of gpu
+        if device > -1:
+            device =self. _check_gpu(device)
         self.nlayers = nlayers
         self.nhidden = nhidden
         # check if model should be run on gpu
@@ -52,6 +54,26 @@ class APCModel(Chain):
         self.optimizer.add_hook(chainer.optimizer_hooks.GradientClipping(5))
         if self.gpu != -1:
             self.to_gpu()
+            
+        
+    def _check_gpu(self, device):
+        """
+        Check
+        adapted from: https://www.programcreek.com/python/example/96830/chainer.cuda.check_cuda_available
+        
+
+        Returns:
+            gpu device id, otherwise -1 (default to cpu)
+        """
+
+        try:
+            cuda.check_cuda_available()
+            return device
+        # if gpu is not available, RuntimeError arises
+        except RuntimeError:
+            print('Cuda backend not available, defaulting to cpu')
+            return -1 
+        
 
     def forward(self, x, pos, E, R):
         """
