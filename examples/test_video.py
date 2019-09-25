@@ -80,8 +80,8 @@ for l in range(nlayers):
     plt.title('layer: ' +str((l+1)))
     plt.imshow(np.reshape(L_w_rep[l], (nx,ny)),cmap='gray')
     
-plt.savefig('../figures/layer_wise.png')
-serializers.save_npz('../models/3l_100u2_model', model)
+#plt.savefig('../figures/layer_wise.png')
+#serializers.save_npz('../models/3l_100u2_model', model)
 
 
 

@@ -117,22 +117,22 @@ class APCModel(Chain):
         # update states
         for l in reversed(range(self.nlayers)):
             if l == self.nlayers - 1:
-                downR = F.max_pooling_2d(self.E[l-1](R[l-1]), ksize=2, stride=2)
+                downR = F.max_pooling_2d(R[l-1], ksize=2, stride=2)
                 R[l] = self.R[l](downR)
                 
             elif l == 0:
-                upR = F.unpooling_2d(self.E[l+1](R[l+1]),ksize=2,stride=2, cover_all=False)
+                upR = F.unpooling_2d(R[l+1],ksize=2,stride=2, cover_all=False)
                 R[l] = self.R[l](F.concat((self.fovea,upR),axis=1))
             else:
-                upR = F.unpooling_2d(self.E[l+1](R[l+1]),ksize=2,stride=2, cover_all=False)
-                downR = F.max_pooling_2d(self.E[l-1](R[l-1]), ksize=2, stride=2)
+                upR = F.unpooling_2d(R[l+1],ksize=2,stride=2, cover_all=False)
+                downR = F.max_pooling_2d(R[l-1], ksize=2, stride=2)
                 R[l] = self.R[l](F.concat((upR,downR),axis=1))
       
         # layer wise representations
         Ahat = [None] * self.nlayers
         for l in range(self.nlayers):
             if l > 0:
-                R_unpooled = F.unpooling_2d(self.E[l](F.relu(R[l])), ksize=2*l, stride=2*l, cover_all=False)
+                R_unpooled = F.unpooling_2d(self.E[l](F.relu(R[l])), ksize=2**l, stride=2**l, cover_all=False)
                 Ahat[l] = F.clipped_relu(R_unpooled)# read out representation
             else:
                 Ahat[l] = F.clipped_relu(self.E[l](F.relu(R[l])))
@@ -224,7 +224,7 @@ class APCModel(Chain):
         self.imgs = imgs
 
     def plot_graphics(self, x, error, z):
-        if self.gpu != 1:
+        if self.gpu > -1:
             self.fovea = cuda.to_cpu(self.fovea)
             self.periphery = cuda.to_cpu(self.periphery)
             z_plot = cuda.to_cpu(z[0].data)
@@ -240,8 +240,9 @@ class APCModel(Chain):
             self.imgs[i].set_data(d[i])
         plt.draw()
         plt.pause(0.001)
-        self.fovea = cuda.to_gpu(self.fovea)
-        self.periphery = cuda.to_gpu(self.periphery)
+        if self.gpu > -1:
+            self.fovea = cuda.to_gpu(self.fovea)
+            self.periphery = cuda.to_gpu(self.periphery)
 
     def update_graphics(self, x, y,f,m):
         self.hl.set_xdata(x)
@@ -271,7 +272,7 @@ class APCModel(Chain):
             for e in tqdm.trange(nepochs):
                 # initialize & reset pos history & record predictions
                 pos_history = np.zeros([len(ds.data),ds.ntime, ds.nbatch, 2]).astype(np.int)
-                predictions = np.zeros([len(ds.data),ds.nbatch, 1, ds.data.shape[3], ds.data.shape[4]])
+                predictions = np.zeros([len(ds.data),ds.nbatch, ds.data.shape[1], ds.data.shape[3], ds.data.shape[4]])
                 for i, x in enumerate(ds):
                     if self.gpu != -1:
                         loss = Variable(cuda.to_gpu(np.array([0.0]).astype(np.float32)))
@@ -317,11 +318,24 @@ class APCModel(Chain):
                             #for l in range(self.nlayers):
                                 #if l == 0:
                         if idx > 0:
+                            #for l in range(self.nlayers):
                             foveal_error = F.mean(F.absolute_error(z[idx-1][0][self.mask], self.fovea[self.mask]))
                             loss += F.mean(foveal_error)
+#                                if l == 0:
+#                                    foveal_error = F.mean(F.absolute_error(z[idx-1][l][self.mask], self.fovea[self.mask]))
+#                                    loss += F.mean(foveal_error)
+#                                else:
+#                                    foveal_error = F.mean(F.absolute_error(z[idx-1][l], z[idx][l-1]))
+#                                    loss += F.mean(foveal_error)
                         else:
                             foveal_error = F.mean(F.absolute_error(z[idx][0][self.mask], self.fovea[self.mask]))
                             loss += F.mean(foveal_error)
+#                                if l == 0:
+#                                    foveal_error = F.mean(F.absolute_error(z[idx][l][self.mask], self.fovea[self.mask]))
+#                                    loss += F.mean(foveal_error)
+#                                else:
+#                                    foveal_error = F.mean(F.absolute_error(z[idx][l], z[idx][l-1]))
+#                                    loss += F.mean(foveal_error)
                                 #else:
                                     #layer_error = (1/l)*F.mean(F.absolute_error(z[u][l][self.mask], z[u][l-1][self.mask]))
                                     #loss += F.mean(layer_error)

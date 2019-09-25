@@ -15,24 +15,24 @@ from chainer import serializers
 # device to run model on set to -1 if you want to run it on the cpu
 device = -1
 # number of saccades per example
-ntime = 5
+ntime = 10
 # number of layers in model
 nlayers = 2
 # number of epochs
-nepochs = 1000
+nepochs = 5
 # hidden units in each module
 nhidden = 10
 ## prepare data
-
+RGB = False # TRUE: color image, FALSE: grayscale image
 # load and resize image
 img = Image.open('../data/lena.png')  # image extension *.png, *.jpg
 
-height = 100
+height = 128 # image height must be power of 2
 hpercent = (height / float(img.size[1]))
 width = int((float(img.size[0]) * float(hpercent)))
 img = img.resize((width, height), Image.ANTIALIAS)
 
-if False:  # color
+if RGB:  # color
     img = np.array(img)
 else:  # grayscale
     img = np.expand_dims(np.array(img.convert('L')), axis=2)
@@ -75,5 +75,8 @@ plt.suptitle('Layer-wise Representations',)
 for l in range(nlayers):
     plt.subplot(1,nlayers, l+1)
     plt.title('layer: ' +str((l+1)))
-    plt.imshow(np.reshape(L_w_rep[l], (100,100)),cmap='gray')
+    if RGB:
+        plt.imshow(np.reshape(L_w_rep[l], (width,height,3)), interpolation='nearest')
+    else:
+        plt.imshow(np.reshape(L_w_rep[l], (width,height)),cmap='gray')
 #serializers.save_npz('3l_lena_100u_model', model)
