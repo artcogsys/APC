@@ -18,15 +18,20 @@ class APCModel(Chain):
         """
         :param nhidden: number of hidden channels
         :param nout: number of output (image) channels
-        :param nlayers: number of layers for predictive coding model
+        :param nlayers: legacy variable
         """
         super().__init__()
         # check availability of gpu
         if device > -1:
             device =self. _check_gpu(device)
+        
         self.nlayers = nlayers
-        self.nhidden = nhidden
-        # check if model should be run on gpu
+        self.nhidden = nhidden # hidden dimensionality
+        self.lstm_units = nhidden*nhidden
+        self.l_units = (2*nhidden)*(2*nhidden)
+        self.channels = nout
+        
+        # identifies device id
         self.gpu = device
        
         # maintain input representations
@@ -41,18 +46,16 @@ class APCModel(Chain):
         self.blur = 11
 
         with self.init_scope():
-            self.R = ChainList()
-            self.E = ChainList()
-            for l in range(self.nlayers):
-                self.R.append(CGRU2D(out_channels=nhidden, ksize=1, device=self.gpu)) # alter kernelsize?
-                self.E.append(L.Convolution2D(in_channels=None, out_channels=nout, ksize=3, pad=int((3 - 1) / 2)))
-               
-                  
+            self.conv = L.Convolution2D(in_channels=None, out_channels=nout, ksize=3, pad=int((3-1)/2))
+            self.l1 = L.Linear(in_size=None, out_size=self.l_units)
+            self.lstm = L.LSTM(in_size=None, out_size=self.lstm_units)
+            self.l2 = L.Linear(in_size=None, out_size=self.l_units)
+            self.deconv = L.Deconvolution2D(in_channels=None, out_channels=nout, ksize=3, pad=int((3-1)/2))
 
         self.optimizer = chainer.optimizers.Adam()  # other learning rate?
         self.optimizer.setup(self)
         self.optimizer.add_hook(chainer.optimizer_hooks.GradientClipping(5))
-        if self.gpu != -1:
+        if self.gpu > -1:
             self.to_gpu()
             
         
@@ -74,17 +77,8 @@ class APCModel(Chain):
             print('Cuda backend not available, defaulting to cpu')
             return -1 
         
-
     def forward(self, x, pos, E, R):
-        """
-
-        :param x:
-        :param pos: (nbatch, 2) with (x,y) positions ranging from 0 to 1
-        :return:
-        """
-
         [nbatch, nchannels, nx, ny] = x.shape
-
         # build up foveal input and foveal mask
         self.fovea = np.zeros([nbatch, nchannels, nx, ny]).astype(np.float32)
         self.mask = np.zeros([nbatch, nchannels, nx, ny]).astype(np.bool)
@@ -93,57 +87,35 @@ class APCModel(Chain):
             cy = pos[i,1]
             self.fovea[i,:,(cx-self.rx):(cx+self.rx+1), (cy-self.ry):(cy+self.ry+1)] = x[i,:,(cx-self.rx):(cx+self.rx+1), (cy-self.ry):(cy+self.ry+1)]
             self.mask[i, :, (cx - self.rx):(cx + self.rx + 1), (cy - self.ry):(cy + self.ry + 1)] = 1
-        
-         # build up peripheral input
+        # build up peripheral input
         self.periphery = F.average_pooling_2d(x.astype(np.float32), ksize=self.blur, pad=int((self.blur-1)/2), stride=1).data
         
- 
-        # Set first layer input to actual input
-       
-        for l in range(self.nlayers):
-            if self.gpu != -1:
-                R[l] = cuda.to_gpu(np.zeros([nbatch,self.nhidden,int(nx/(2**l)), int(ny/(2**l))]).astype(np.float32))
-            else:
-                R[l] = np.zeros([nbatch,self.nhidden,int(nx/(2**l)), int(ny/(2**l))]).astype(np.float32)
-            
-        if self.gpu != -1: # put on gpu if enabled
+        if self.gpu > -1: # put on gpu if enabled
             self.fovea = cuda.to_gpu(self.fovea)
             self.periphery = cuda.to_gpu(self.periphery)
-        # only use fovea as sensory input
-        if self.nlayers == 1: #directly return prediction
-            res = F.clipped_relu(self.E[0](F.relu(self.R[0](self.fovea))), 1.0)
-            return res, E, R
+        # forward pass
+        conv = F.relu(self.conv(self.fovea))
+        conv = F.max_pooling_2d(conv, ksize=2, stride=2)
+        l1 = F.relu(self.l1(conv))
+        lstm = self.lstm(l1)
+        l2 = F.relu(self.l2(lstm))
+        # reshape back into 2d shape
+        l2 = F.reshape(l2, (1, self.channels,int(np.sqrt(self.l_units)), int(np.sqrt(self.l_units))))
+        l2 = F.unpooling_2d(l2, ksize=2, stride=2, cover_all=False)
+        return [self.deconv(l2)], E, R
+    
 
-        # update states
-        for l in reversed(range(self.nlayers)):
-            if l == self.nlayers - 1:
-                downR = F.max_pooling_2d(R[l-1], ksize=2, stride=2)
-                R[l] = self.R[l](downR)
-                
-            elif l == 0:
-                upR = F.unpooling_2d(R[l+1],ksize=2,stride=2, cover_all=False)
-                R[l] = self.R[l](F.concat((self.fovea,upR),axis=1))
-            else:
-                upR = F.unpooling_2d(R[l+1],ksize=2,stride=2, cover_all=False)
-                downR = F.max_pooling_2d(R[l-1], ksize=2, stride=2)
-                R[l] = self.R[l](F.concat((upR,downR),axis=1))
-      
-        # layer wise representations
-        Ahat = [None] * self.nlayers
-        for l in range(self.nlayers):
-            if l > 0:
-                R_unpooled = F.unpooling_2d(self.E[l](F.relu(R[l])), ksize=2**l, stride=2**l, cover_all=False)
-                Ahat[l] = F.clipped_relu(R_unpooled)# read out representation
-            else:
-                Ahat[l] = F.clipped_relu(self.E[l](F.relu(R[l])))
-        return Ahat, E, R
-        
 
     def reset_state(self):
-        [x.reset_state() for x in self.R]
+        """
+        reset state of latent representation
+        """
+        self.lstm.reset_state()
 
     def sample_position(self, mode='random', nx=None, ny=None, batch_size = None, error=None):
-
+        """
+        Deterimine next position to foveate
+        """
         if mode == 'random':  # sample at random location
             pos = np.concatenate(
                 [np.random.random_integers(self.rx, nx - self.rx, [batch_size, 1]),
@@ -274,7 +246,7 @@ class APCModel(Chain):
                 pos_history = np.zeros([len(ds.data),ds.ntime, ds.nbatch, 2]).astype(np.int)
                 predictions = np.zeros([len(ds.data),ds.nbatch, ds.data.shape[1], ds.data.shape[3], ds.data.shape[4]])
                 for i, x in enumerate(ds):
-                    if self.gpu != -1:
+                    if self.gpu > -1:
                         loss = Variable(cuda.to_gpu(np.array([0.0]).astype(np.float32)))
                     else:
                         loss = Variable(np.array([0.0]).astype(np.float32))
@@ -304,43 +276,23 @@ class APCModel(Chain):
                         z[idx], E, R = self(inputs, pos, E, R)
                         z_data = z[idx][0].data
                         z_data = cuda.to_cpu(z_data)
-                        if e == nepochs - 1:
-                            for l in range(self.nlayers):
-                                l_w_rep[l] = cuda.to_cpu(z[idx][l].data)
+                        #if e == nepochs - 1:
+                            #for l in range(self.nlayers):
+                                #l_w_rep[l] = cuda.to_cpu(z[idx][l].data)
                         # record predictions, result will hold prediction after final saccade of the trial
                         predictions[i,:,:,:,:] = z_data
                         # record layer-wise error
                         for l in range(self.nlayers):
                             errors[l,t] = F.mean(E[l]).data
                             
-                        # minimize error between all past (and current) representations and the current foveated patch
-                        #for u in range(idx):
-                            #for l in range(self.nlayers):
-                                #if l == 0:
+                        # minimize error between past and current represenation
                         if idx > 0:
-                            #for l in range(self.nlayers):
-                            foveal_error = F.mean(F.absolute_error(z[idx-1][0][self.mask], self.fovea[self.mask]))
+                            foveal_error =  F.mean(F.absolute_error(z[idx - 1][0][self.mask], self.fovea[self.mask]))
                             loss += F.mean(foveal_error)
-#                                if l == 0:
-#                                    foveal_error = F.mean(F.absolute_error(z[idx-1][l][self.mask], self.fovea[self.mask]))
-#                                    loss += F.mean(foveal_error)
-#                                else:
-#                                    foveal_error = F.mean(F.absolute_error(z[idx-1][l], z[idx][l-1]))
-#                                    loss += F.mean(foveal_error)
                         else:
-                            foveal_error = F.mean(F.absolute_error(z[idx][0][self.mask], self.fovea[self.mask]))
+                            foveal_error =  F.mean(F.absolute_error(z[idx][0][self.mask], self.fovea[self.mask]))
                             loss += F.mean(foveal_error)
-#                                if l == 0:
-#                                    foveal_error = F.mean(F.absolute_error(z[idx][l][self.mask], self.fovea[self.mask]))
-#                                    loss += F.mean(foveal_error)
-#                                else:
-#                                    foveal_error = F.mean(F.absolute_error(z[idx][l], z[idx][l-1]))
-#                                    loss += F.mean(foveal_error)
-                                #else:
-                                    #layer_error = (1/l)*F.mean(F.absolute_error(z[u][l][self.mask], z[u][l-1][self.mask]))
-                                    #loss += F.mean(layer_error)
-                            # integrate layer wise loss 
-                            #loss += np.sum(errors[:,u])
+                    
 
                         # get peripheral error
                         zb = F.average_pooling_2d(z[idx][0], ksize=self.blur, pad=int((self.blur - 1) / 2), stride=1)
@@ -388,7 +340,7 @@ class APCModel(Chain):
                     L_E[e,l] = np.sum(errors[l,:])
                 if DEBUG:
                     self.update_graphics(np.arange(e + 1), L[:(e + 1)], MSE_f[:(e + 1)], MSE_m[:(e+1)])
-                    #serializers.save_npz('../models/3l_100u2_mid_model', self)
+                    #serializers.save_npz('../models/ed_car_model', self)
 
 
         return L, L_E, MSE_f, MSE_m, l_w_rep
