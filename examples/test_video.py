@@ -12,18 +12,21 @@ import tqdm
 import matplotlib.pyplot as plt
 
 # device to run model on set to -1 to run on cpu
-device = -1
+device = 1
 # number of layers
 nlayers= 2
 # number of epochs
 nepochs = 1000
 # video source
-fwidth = 1280
-fheight = 720
-height=72
-hpercent = height / float(fheight)
-width = int((float(fwidth) * float(hpercent)))
-
+#fwidth = 1280
+#fheight = 720
+#height=72
+#hpercent = height / float(fheight)
+#width = int((float(fwidth) * float(hpercent)))
+# set width and height of model as power of two
+width, height = 128,128
+# hidden dimensionality in lstm (power of 2)
+nhidden = int(height/8)
 #cap = cv2.VideoCapture('../data/Samsung UHD Sample (Nature) [2160p 4k].mp4')
 cap = cv2.VideoCapture('../data/samsung-uhd-iceland.mkv')
 
@@ -47,7 +50,7 @@ source = DataSource(data, ntime=nexamples, batch_size=1)
 ## Train model
 ## Train model
 
-model = APCModel(nhidden=100, nout=1, nlayers=nlayers, device=device) # operating on grayscale
+model = APCModel(nhidden=nhidden, nout=1, nlayers=nlayers, device=device) # operating on grayscale
 
 
 L, L_E, MSE_f, MSE_m, L_w_rep = model.train(source, nepochs=nepochs, cutoff=25)
@@ -58,30 +61,29 @@ plt.plot(np.arange(nepochs), MSE_m)
 plt.xlabel('number of epochs')
 plt.ylabel('MSE')
 plt.legend(['patched', 'model'])
-plt.show()
-plt.savefig('../figures/patchedvsmodel.png')
-plt.figure(3, figsize=(7,7))
-plt.title('layer-wise error of ' + str(nlayers)+ '-layer model')
-for l in range(nlayers):
-    plt.plot(np.arange(nepochs), L_E[:,l], label='layer '+ str(l+1))
+plt.savefig('../figures/videopatchedvsmodel.png')
+#plt.figure(3, figsize=(7,7))
+#plt.title('layer-wise error of ' + str(nlayers)+ '-layer model')
+#for l in range(nlayers):
+#    plt.plot(np.arange(nepochs), L_E[:,l], label='layer '+ str(l+1))
+#
+#plt.xlabel('number of epochs')
+#plt.ylabel('layer-wise error')
+#plt.legend()
+#plt.show()
+#plt.savefig('../figures/layer_wise_error.png')
 
-plt.xlabel('number of epochs')
-plt.ylabel('layer-wise error')
-plt.legend()
-plt.show()
-plt.savefig('../figures/layer_wise_error.png')
-
-# plot layer wise representations
-nx,ny = L_w_rep[0].shape[2], L_w_rep[0].shape[3]
-plt.subplots(1,nlayers, figsize=(12,5))
-plt.suptitle('Layer-wise Representations')
-for l in range(nlayers):
-    plt.subplot(1,nlayers, l+1)
-    plt.title('layer: ' +str((l+1)))
-    plt.imshow(np.reshape(L_w_rep[l], (nx,ny)),cmap='gray')
+## plot layer wise representations
+#nx,ny = L_w_rep[0].shape[2], L_w_rep[0].shape[3]
+#plt.subplots(1,nlayers, figsize=(12,5))
+#plt.suptitle('Layer-wise Representations')
+#for l in range(nlayers):
+#    plt.subplot(1,nlayers, l+1)
+#    plt.title('layer: ' +str((l+1)))
+#    plt.imshow(np.reshape(L_w_rep[l], (nx,ny)),cmap='gray')
     
 #plt.savefig('../figures/layer_wise.png')
-#serializers.save_npz('../models/3l_100u2_model', model)
+serializers.save_npz('../models/ed_video_model', model)
 
 
 

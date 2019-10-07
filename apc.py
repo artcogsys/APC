@@ -32,7 +32,7 @@ class APCModel(Chain):
         self.channels = nout
         
         # identifies device id
-        self.gpu = device
+        self.device_id = device
        
         # maintain input representations
         self.fovea = None
@@ -46,16 +46,18 @@ class APCModel(Chain):
         self.blur = 11
 
         with self.init_scope():
-            self.conv = L.Convolution2D(in_channels=None, out_channels=nout, ksize=3, pad=int((3-1)/2))
+            self.conv1 = L.Convolution2D(in_channels=None, out_channels=nout, ksize=3, pad=int((3-1)/2))
+            self.conv2 = L.Convolution2D(in_channels=None, out_channels=nout, ksize=3, pad=int((3-1)/2))
             self.l1 = L.Linear(in_size=None, out_size=self.l_units)
             self.lstm = L.LSTM(in_size=None, out_size=self.lstm_units)
             self.l2 = L.Linear(in_size=None, out_size=self.l_units)
-            self.deconv = L.Deconvolution2D(in_channels=None, out_channels=nout, ksize=3, pad=int((3-1)/2))
+            self.deconv1 = L.Deconvolution2D(in_channels=None, out_channels=nout, ksize=3, pad=int((3-1)/2))
+            self.deconv2 = L.Deconvolution2D(in_channels=None, out_channels=nout, ksize=3, pad=int((3-1)/2))
 
         self.optimizer = chainer.optimizers.Adam()  # other learning rate?
         self.optimizer.setup(self)
         self.optimizer.add_hook(chainer.optimizer_hooks.GradientClipping(5))
-        if self.gpu > -1:
+        if self.device_id > -1:
             self.to_gpu()
             
         
@@ -77,7 +79,7 @@ class APCModel(Chain):
             print('Cuda backend not available, defaulting to cpu')
             return -1 
         
-    def forward(self, x, pos, E, R):
+    def forward(self, x, pos):
         [nbatch, nchannels, nx, ny] = x.shape
         # build up foveal input and foveal mask
         self.fovea = np.zeros([nbatch, nchannels, nx, ny]).astype(np.float32)
@@ -90,19 +92,25 @@ class APCModel(Chain):
         # build up peripheral input
         self.periphery = F.average_pooling_2d(x.astype(np.float32), ksize=self.blur, pad=int((self.blur-1)/2), stride=1).data
         
-        if self.gpu > -1: # put on gpu if enabled
+        if self.device_id > -1: # put on gpu if enabled
             self.fovea = cuda.to_gpu(self.fovea)
             self.periphery = cuda.to_gpu(self.periphery)
+            
         # forward pass
-        conv = F.relu(self.conv(self.fovea))
-        conv = F.max_pooling_2d(conv, ksize=2, stride=2)
-        l1 = F.relu(self.l1(conv))
+        conv1 = F.relu(self.conv1(self.fovea))
+        conv1 = F.max_pooling_2d(conv1, ksize=2, stride=2)
+        conv2 = F.relu(self.conv2(conv1))
+        conv2 = F.max_pooling_2d(conv2, ksize=2, stride=2)
+        l1 = F.relu(self.l1(conv2))
         lstm = self.lstm(l1)
         l2 = F.relu(self.l2(lstm))
         # reshape back into 2d shape
         l2 = F.reshape(l2, (1, self.channels,int(np.sqrt(self.l_units)), int(np.sqrt(self.l_units))))
         l2 = F.unpooling_2d(l2, ksize=2, stride=2, cover_all=False)
-        return [self.deconv(l2)], E, R
+        deconv1 = self.deconv1(l2)
+        deconv1 = F.unpooling_2d(deconv1, ksize=2, stride=2, cover_all=False)
+        deconv2 = self.deconv2(deconv1)
+        return deconv2
     
 
 
@@ -140,9 +148,11 @@ class APCModel(Chain):
     
 
     
-    def evaluate_fovea(self, data, predictions, pos_history):
+    def evaluate_patched_model(self, data, predictions, pos_history):
         """
-        TBD
+        Evaluates the error-based model against a baseline in
+        which foveations are replaced with high resolution patches
+        on a mean_image background
         """
         
         # get dimensions of pos history
@@ -196,7 +206,7 @@ class APCModel(Chain):
         self.imgs = imgs
 
     def plot_graphics(self, x, error, z):
-        if self.gpu > -1:
+        if self.device_id > -1:
             self.fovea = cuda.to_cpu(self.fovea)
             self.periphery = cuda.to_cpu(self.periphery)
             z_plot = cuda.to_cpu(z[0].data)
@@ -212,7 +222,7 @@ class APCModel(Chain):
             self.imgs[i].set_data(d[i])
         plt.draw()
         plt.pause(0.001)
-        if self.gpu > -1:
+        if self.device_id > -1:
             self.fovea = cuda.to_gpu(self.fovea)
             self.periphery = cuda.to_gpu(self.periphery)
 
@@ -235,8 +245,8 @@ class APCModel(Chain):
         if cutoff is None:
             cutoff = ds.ntime
 
-        L, L_E, MSE_f, MSE_m = np.zeros(nepochs), np.zeros((nepochs,self.nlayers)), np.zeros(nepochs), np.zeros(nepochs)
-        l_w_rep = [None] * self.nlayers # record final layer representations
+        L, MSE_f, MSE_m = np.zeros(nepochs), np.zeros(nepochs), np.zeros(nepochs)
+
         if DEBUG:
             self.init_graphics(shape=np.squeeze(np.moveaxis(ds.data[0, :, 0, ...], 0, -1)).shape)
 
@@ -246,7 +256,7 @@ class APCModel(Chain):
                 pos_history = np.zeros([len(ds.data),ds.ntime, ds.nbatch, 2]).astype(np.int)
                 predictions = np.zeros([len(ds.data),ds.nbatch, ds.data.shape[1], ds.data.shape[3], ds.data.shape[4]])
                 for i, x in enumerate(ds):
-                    if self.gpu > -1:
+                    if self.device_id > -1:
                         loss = Variable(cuda.to_gpu(np.array([0.0]).astype(np.float32)))
                     else:
                         loss = Variable(np.array([0.0]).astype(np.float32))
@@ -258,49 +268,39 @@ class APCModel(Chain):
                     pos = self.sample_position(mode='random', nx=ds.data.shape[3], ny=ds.data.shape[4], batch_size=ds.batch_size)
                     z = [None] * cutoff
                     idx = 0
-                     # initialize erros and representations
-                    E, R = [None] * self.nlayers, [None]*self.nlayers
-                    errors = np.zeros((self.nlayers,ds.ntime)) # save errors from layers
+            
+            
                     for t in range(ds.ntime):
                         # record position of fovea
                         pos_history[i, t, :, :] = pos
                         inputs = x[:,:,t,...]
                         [nbatch,nchannels,nx,ny] = inputs.shape
-                        # initialize error with apropriate dimensions per layer
-                        for l in range(self.nlayers):
-                            if self.gpu != -1:
-                                E[l] = cuda.to_gpu(np.zeros([nbatch,nchannels,int(nx/(2**l)), int(ny/(2**l))]).astype(np.float32))
-                            else:
-                                E[l] = np.zeros([nbatch,nchannels,int(nx/(2**l)), int(ny/(2**l))]).astype(np.float32)
+                     
                         # compute predicted high-resolution internal representation from foveal and/or peripheral representations
-                        z[idx], E, R = self(inputs, pos, E, R)
+                        z[idx]= self(inputs, pos)
                         z_data = z[idx][0].data
                         z_data = cuda.to_cpu(z_data)
-                        #if e == nepochs - 1:
-                            #for l in range(self.nlayers):
-                                #l_w_rep[l] = cuda.to_cpu(z[idx][l].data)
+                        
                         # record predictions, result will hold prediction after final saccade of the trial
                         predictions[i,:,:,:,:] = z_data
-                        # record layer-wise error
-                        for l in range(self.nlayers):
-                            errors[l,t] = F.mean(E[l]).data
+                       
                             
                         # minimize error between past and current represenation
                         if idx > 0:
-                            foveal_error =  F.mean(F.absolute_error(z[idx - 1][0][self.mask], self.fovea[self.mask]))
+                            foveal_error =  F.mean(F.absolute_error(z[idx - 1][self.mask], self.fovea[self.mask]))
                             loss += F.mean(foveal_error)
                         else:
-                            foveal_error =  F.mean(F.absolute_error(z[idx][0][self.mask], self.fovea[self.mask]))
+                            foveal_error =  F.mean(F.absolute_error(z[idx][self.mask], self.fovea[self.mask]))
                             loss += F.mean(foveal_error)
                     
 
                         # get peripheral error
-                        zb = F.average_pooling_2d(z[idx][0], ksize=self.blur, pad=int((self.blur - 1) / 2), stride=1)
-                        #zb.to_cpu()
+                        zb = F.average_pooling_2d(z[idx], ksize=self.blur, pad=int((self.blur - 1) / 2), stride=1)
+              
                         peripheral_error = F.mean(F.absolute_error(zb, self.periphery), axis=1)
                         #loss += F.mean(peripheral_error)
                         peripheral_error.to_cpu()
-                        if self.gpu != -1:
+                        if self.device_id != -1:
                             loss.to_cpu()
                             L[e] += loss.data
                             loss.to_gpu()
@@ -308,7 +308,7 @@ class APCModel(Chain):
                             L[e] += loss.data
 
                         if DEBUG:
-                            z_idx = z[idx][0]
+                            z_idx = z[idx]
                             self.plot_graphics(x[0, :, t, ...], peripheral_error[0].data, z_idx)
                             self.fig.suptitle('epoch ' + str(e) + '/' + str(nepochs) + '; example ' + str(ds.batch_idx) +
                                          '/' + str(ds.nbatch) + '; timestep ' + str(t + 1) + '/' + str(ds.ntime))
@@ -324,7 +324,7 @@ class APCModel(Chain):
                            
                             idx = 0
                             z = [None] * cutoff
-                            if self.gpu != -1:
+                            if self.device_id != -1:
                                 loss = Variable(cuda.to_gpu(np.array([0.0]).astype(np.float32)))
                             else:
                                 loss = Variable(np.array([0.0]).astype(np.float32))
@@ -335,12 +335,11 @@ class APCModel(Chain):
 
                 L[e] /= ds.batch_size * ds.nbatch
                 # compare final representation against fovea baseline
-                MSE_f[e], MSE_m[e] = self.evaluate_fovea(ds.data, predictions, pos_history)
-                for l in range(self.nlayers):
-                    L_E[e,l] = np.sum(errors[l,:])
+                MSE_f[e], MSE_m[e] = self.evaluate_patched_model(ds.data, predictions, pos_history)
+          
                 if DEBUG:
                     self.update_graphics(np.arange(e + 1), L[:(e + 1)], MSE_f[:(e + 1)], MSE_m[:(e+1)])
-                    #serializers.save_npz('../models/ed_car_model', self)
+                    serializers.save_npz('../models/ed_video_model', self)
 
 
-        return L, L_E, MSE_f, MSE_m, l_w_rep
+        return L, MSE_f, MSE_m
