@@ -16,10 +16,10 @@ device = 0
 # number of saccades per example
 ntime = 10
 # number of epochs
-nepochs = 100
+nepochs = 1000
 
 ## prepare data
-RGB = False # TRUE: color image, FALSE: grayscale image
+RGB = True # TRUE: color image, FALSE: grayscale image
 # load and resize image
 img = Image.open('../data/lena.png')  # image extension *.png, *.jpg
 
@@ -28,7 +28,7 @@ hpercent = (height / float(img.size[1]))
 width = int((float(img.size[0]) * float(hpercent)))
 img = img.resize((width, height), Image.ANTIALIAS)
 # hidden dimensionality in lstm (power of 2)
-nhidden = int(height/8)
+nhidden = int(height/4)
 if RGB:  # color
     img = np.array(img)
 else:  # grayscale
@@ -44,18 +44,18 @@ source = DataSource(data, ntime=ntime, batch_size=1)
 
 ## Train model
 
-model = APCModel(nhidden=nhidden, nout=source.data.shape[1], device=device)
+#model = APCModel(nhidden=nhidden, nout=source.data.shape[1], device=device)
 
 
-L, MSE_f, MSE_m= model.train(source, nepochs=nepochs)
+#L, MSE_f, MSE_m= model.train(source, nepochs=nepochs)
 
-plt.figure(2, figsize=(7,7))
-plt.title('MSE of patched vs model')
-plt.plot(np.arange(nepochs),MSE_f)
-plt.plot(np.arange(nepochs), MSE_m)
-plt.xlabel('number of epochs')
-plt.ylabel('MSE')
-plt.legend(['patched', 'model'])
-plt.show()
+#plt.figure(2, figsize=(7,7))
+#plt.title('MSE of patched vs model')
+#plt.plot(np.arange(nepochs),MSE_f)
+#plt.plot(np.arange(nepochs), MSE_m)
+#plt.xlabel('number of epochs')
+#plt.ylabel('MSE')
+#plt.legend(['patched', 'model'])
+#plt.show()
 
 #serializers.save_npz('3l_lena_100u_model', model)
