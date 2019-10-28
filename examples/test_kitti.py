@@ -17,7 +17,7 @@ import time
 from datetime import datetime
 # device to run model on set to -1 to run on cpu
 device = -1
-nlayers=2
+nlayers=5
 # create folder for current session
 session = 'session_'+str(time.time())[-5:-1]
 fname = session+'_'+  datetime.now().strftime('%Y%m%d_%H%M')+'/'
@@ -44,7 +44,7 @@ val_source = DataSource(val_data, ntime=10, batch_size=1)
 
 # set up width height 
 width, height = 128,128
-nhidden = height // 4
+nhidden = height // (2*nlayers)
 model = APCModel(nhidden=nhidden, nout=32, nlayers=nlayers, device=device) # operating on grayscale
 serializers.load_npz('../models/kitti_model_95', model)
 

@@ -27,9 +27,9 @@ class APCModel(Chain):
         
         self.nlayers = nlayers
         self.nhidden = nhidden # hidden dimensionality
-        self.gru_units = nhidden*nhidden
-        self.l_units = nhidden*nhidden
-        self.channels = nout 
+        self.gru_units = 1024 #nhidden*nhidden
+        self.l_units = 1024 #nhidden*nhidden
+        self.channels = 1 
         
         # identifies device id
         self.device_id = device
@@ -46,15 +46,20 @@ class APCModel(Chain):
         self.blur = 11
 
         with self.init_scope():
-            self.conv1 = L.Convolution2D(in_channels=None, out_channels=nout, ksize=3, pad=int((3-1)/2))
-            self.conv2 =  L.Convolution2D(in_channels=None, out_channels=nout//2, ksize=3, pad=int((3-1)/2))
-            #self.l1 = L.Linear(in_size=None, out_size=self.l_units)
-            #self.gru = L.GRU(in_size=None, out_size=self.gru_units)
-            #self.l2 = L.Linear(in_size=None, out_size=self.l_units)
-            self.gru = CGRU2D(out_channels=nout//2, ksize=3, device=device)
-            self.deconv1 = L.Deconvolution2D(in_channels=None, out_channels=nout//2, ksize=3, pad=int((3-1)/2))
-            self.deconv2 = L.Deconvolution2D(in_channels=None, out_channels=1, ksize=3, pad=int((3-1)/2))
-
+            self.conv1 = L.Convolution2D(in_channels=None, out_channels=64, ksize=3, pad=int((3-1)/2))
+            self.conv2 =  L.Convolution2D(in_channels=None, out_channels=64, ksize=3, pad=int((3-1)/2))
+            self.conv3 = L.Convolution2D(in_channels=None, out_channels=64, ksize=3, pad=int((3-1)/2))
+            self.conv4 = L.Convolution2D(in_channels=None, out_channels=64, ksize=3, pad=int((3-1)/2))
+            self.conv5 = L.Convolution2D(in_channels=None, out_channels=64, ksize=3, pad=int((3-1)/2))
+            self.l1 = L.Linear(in_size=None, out_size=self.l_units)
+            self.gru = L.GRU(in_size=None, out_size=self.gru_units)
+            self.l2 = L.Linear(in_size=None, out_size=self.l_units)
+            self.deconv1 = L.Deconvolution2D(in_channels=None, out_channels=64, ksize=3, pad=int((3-1)/2))
+            self.deconv2 = L.Deconvolution2D(in_channels=None, out_channels=64, ksize=3, pad=int((3-1)/2))
+            self.deconv3 = L.Deconvolution2D(in_channels=None, out_channels=64, ksize=3, pad=int((3-1)/2))
+            self.deconv4 = L.Deconvolution2D(in_channels=None, out_channels=64, ksize=3, pad=int((3-1)/2))
+            self.deconv5 = L.Deconvolution2D(in_channels=None, out_channels=1, ksize=3, pad=int((3-1)/2))
+            
         self.optimizer = chainer.optimizers.Adam()  # other learning rate?
         self.optimizer.setup(self)
         self.optimizer.add_hook(chainer.optimizer_hooks.GradientClipping(5))
@@ -98,20 +103,33 @@ class APCModel(Chain):
             self.periphery = cuda.to_gpu(self.periphery)
             
         # forward pass
+        
+        # conv net
         conv1 = F.relu(self.conv1(self.fovea))
-        pool1 = F.max_pooling_2d(conv1, ksize=2, stride=2)
-        conv2 = F.relu(self.conv2(pool1))
-        pool2 = F.max_pooling_2d(conv2, ksize=2, stride=2)
-        #l1 = F.relu(self.l1(pool2))
-        gru = self.gru(pool2)
-        #l2 = F.relu(self.l2(gru))
-        # reshape back into 2d shape
-        #l2 = F.reshape(l2, (nbatch, self.channels,int(np.sqrt(self.l_units)), int(np.sqrt(self.l_units))))
-        unpool1 = F.unpooling_2d(gru, ksize=2, stride=2, cover_all=False)
-        deconv1 = self.deconv1(unpool1)
-        unpool2 = F.unpooling_2d(deconv1, ksize=2, stride=2, cover_all=False)
-        deconv2 = self.deconv2(unpool2)
-        return deconv2
+        conv2 = F.relu(self.conv2(conv1))
+        pool1 = F.max_pooling_2d(conv2, ksize=2, stride=2)
+        conv3 = F.relu(self.conv3(pool1))
+        conv4 = F.relu(self.conv4(conv3))
+        conv5 = F.relu(self.conv5(conv4))
+        pool2 = F.max_pooling_2d(conv5, ksize=2, stride=2)
+        l1 = F.relu(self.l1(pool2))
+        
+        # latent recurrent representation
+        gru = self.gru(l1)
+        
+        # deconv net
+        l2 = F.relu(self.l2(gru))
+        # reshape back into 4d tensor (nb, nc, nx, ny)
+        l2 = F.reshape(l2, (nbatch, self.channels,int(np.sqrt(self.l_units)), int(np.sqrt(self.l_units))))
+        deconv1 = F.relu(self.deconv1(l2))
+        deconv2 = F.relu(self.deconv2(deconv1))
+        unpool1 = F.unpooling_2d(deconv2, ksize=2, stride=2, cover_all=False)
+        deconv3 = F.relu(self.deconv3(unpool1))
+        deconv4 = F.relu(self.deconv4(deconv3))
+        deconv5 = F.relu(self.deconv5(deconv4))
+        unpool2 = F.unpooling_2d(deconv5, ksize=2, stride=2, cover_all=False)
+    
+        return unpool2
     
 
 
@@ -345,8 +363,8 @@ class APCModel(Chain):
 
                 if DEBUG:
                     self.update_graphics(np.arange(e + 1), L_train[:(e + 1)])
-                #if e % 5 == 0 and fname != None: # save model every 10 epochs
-                    #serializers.save_npz('../models/'+fname+'kitti_model_' + str(e), self)
+                if e % 5 == 0 and fname != None: # save model every 10 epochs
+                    serializers.save_npz('../models/'+fname+'kitti_model_' + str(e), self)
 
         
         return L_train, L_val 

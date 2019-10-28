@@ -16,10 +16,10 @@ import time
 from datetime import datetime
 # device to run model on set to -1 to run on cpu
 device = 0
-nlayers=2
+nlayers=5
 # create folder for current session
 #session = 'session_'+str(time.time())[-5:-1]
-session = 'two_conv_deconv_model2'
+session = 'two_conv_deconv_model3'
 fname = session+'_'+  datetime.now().strftime('%Y%m%d_%H%M')+'/'
 os.makedirs('../models/' + fname)
 # training parameters
