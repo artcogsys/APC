@@ -10,8 +10,7 @@ import tqdm
 import chainer.functions as F
 from chainer import Variable
 
-DEBUG = True
-
+DEBUG = False
 class APCModel(Chain):
 
     def __init__(self, nhidden, nout, nlayers=1, device=-1):
@@ -138,6 +137,7 @@ class APCModel(Chain):
         reset state of latent representation
         """
         self.gru.reset_state()
+        
 
     def sample_position(self, mode='random', nx=None, ny=None, batch_size = None, error=None):
         """
@@ -363,8 +363,8 @@ class APCModel(Chain):
 
                 if DEBUG:
                     self.update_graphics(np.arange(e + 1), L_train[:(e + 1)])
-                if e % 5 == 0 and fname != None: # save model every 10 epochs
-                    serializers.save_npz('../models/'+fname+'kitti_model_' + str(e), self)
+                #if e % 5 == 0 and fname != None: # save model every 10 epochs
+                    #serializers.save_npz('../models/'+fname+'kitti_model_' + str(e), self)
 
         
         return L_train, L_val 
@@ -418,3 +418,50 @@ class APCModel(Chain):
                 pos = self.sample_position(mode='error', error=peripheral_error)
         # normalize validation loss
         L_val[e] /= ds_val.batch_size * ds_val.nbatch
+        
+    def test(self, ds_test):
+        """
+        Method that passes over test data once
+        """
+        # compute test error
+        total_loss = 0
+        nexamples, nchannels, ntime, nx, ny = ds_test.data.shape
+        pred = np.zeros((nexamples, 1, ntime, 128, 128))
+        with chainer.using_config('train', False):
+            for i, x in enumerate(ds_test):
+                if self.device_id > -1:
+                    loss = Variable(cuda.to_gpu(np.array([0.0]).astype(np.float32)))
+                else:
+                    loss = Variable(np.array([0.0]).astype(np.float32))
+    
+                # reset model at start of each sequence
+                self.reset_state()
+    
+                # sample initial positions
+                pos = self.sample_position(mode='random', nx=ds_test.nx, ny=ds_test.ny, batch_size=ds_test.batch_size)
+                z = [None]*ds_test.ntime
+                idx = 0
+                
+                for t in range(ds_test.ntime):
+                    inputs = x[:,:,t,...]
+                    [nbatch,nchannels,nx,ny] = inputs.shape
+                         
+                    # compute predicted high-resolution internal representation from foveal and/or peripheral representations
+                    z[idx]= self(inputs, pos)
+                    z_data = z[idx][0].data
+                    z_data = cuda.to_cpu(z_data)
+                    pred[i,:,t,...] = z_data
+                    # minimize error between past and current represenation
+                    if idx > 0:
+                        foveal_error =  F.mean(F.absolute_error(z[idx - 1][self.mask], self.fovea[self.mask]))
+                        loss += F.mean(foveal_error)
+                    # get peripheral error
+                    zb = F.average_pooling_2d(z[idx], ksize=self.blur, pad=int((self.blur - 1) / 2), stride=1)
+                    peripheral_error = F.mean(F.absolute_error(zb, self.periphery), axis=1)
+                    peripheral_error.to_cpu()
+                
+                    idx += 1 
+                # determine new position based on peripheral vision
+                pos = self.sample_position(mode='error', error=peripheral_error)
+            total_loss += loss.data
+        return total_loss / (ds_test.nbatch * ds_test.batch_size), pred

@@ -23,7 +23,7 @@ session = 'two_conv_deconv_model3'
 fname = session+'_'+  datetime.now().strftime('%Y%m%d_%H%M')+'/'
 os.makedirs('../models/' + fname)
 # training parameters
-nepochs=150
+nepochs=100
 batch_size = 4
 samples_per_epoch = 50
 ntime = 10
