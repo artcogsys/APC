@@ -12,23 +12,19 @@ plt.rcParams['axes.labelweight'] = 'bold'
 #from chainer import serializers
 
 # device to run model on set to -1 if you want to run it on the cpu
-device = 0
+device = -1
 # number of saccades per example
 ntime = 10
 # number of epochs
 nepochs = 1000
 
 ## prepare data
-RGB = True # TRUE: color image, FALSE: grayscale image
+RGB = False # TRUE: color image, FALSE: grayscale image
 # load and resize image
 img = Image.open('../data/lena.png')  # image extension *.png, *.jpg
 
-height = 128 # image height must be power of 2
-hpercent = (height / float(img.size[1]))
-width = int((float(img.size[0]) * float(hpercent)))
-img = img.resize((width, height), Image.ANTIALIAS)
-# hidden dimensionality in lstm (power of 2)
-nhidden = int(height/4)
+img = img.resize((64, 64), Image.ANTIALIAS)
+
 if RGB:  # color
     img = np.array(img)
 else:  # grayscale
@@ -44,10 +40,10 @@ source = DataSource(data, ntime=ntime, batch_size=1)
 
 ## Train model
 
-#model = APCModel(nhidden=nhidden, nout=source.data.shape[1], device=device)
+model = APCModel(nout=32,  nlayers=5, device=device)
 
 
-#L, MSE_f, MSE_m= model.train(source, nepochs=nepochs)
+L= model.train(source, nepochs=nepochs)
 
 #plt.figure(2, figsize=(7,7))
 #plt.title('MSE of patched vs model')

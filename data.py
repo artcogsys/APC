@@ -16,17 +16,19 @@ class DataSource:
 
         self.ntime = ntime
         self.process = False
-        self.nx, self.ny = 128, 128
         if self.ntime == 1:
 
             self.data = data
 
         elif self.ntime == data.shape[0]:
-
-            self.data = np.swapaxes(np.expand_dims(data, axis=0), 1, 2)
+            if len(data.shape) < 5: # channels or ntime missing
+                self.data = np.swapaxes(np.expand_dims(data, axis=0), 1, 2)
+                self.data = np.swapaxes(self.data, 0, 1) # reshape into (nexamples, nchannels, ntime, ..)
+            else:
+                self.data = np.swapaxes(np.swapaxes(data, 0, 1), 1, 2)
 
         else:  # reshape input data to time segments
-            self.process = True
+            #self.process = True
             # number of examples of length ntime
             self.nexamples = (data.shape[0] // self.ntime)
             # constrain and reshape so we have (nexamples, nchannels, ntime, ...)
@@ -59,16 +61,19 @@ class DataSource:
             if self.process:
                 # preprocess data in batches
                 data_batch = self.preprocess(idx)
-            return data_batch
+                return data_batch
+            else:
+                
+                return self.data[idx]
 
         else:
 
             raise StopIteration
             
     def preprocess(self, idx):
-        # preprocess data
+        # preprocess  and normalize data
         nexamples, nchannels, ntime, nx, ny = self.data.shape
-        data_batch = np.zeros((len(idx), 1, ntime,  128, 128))
+        data_batch = np.zeros((len(idx), 1, ntime,  64, 64))
         j = 0 # index for data_batch
         for i in idx:
             for t in range(ntime):
@@ -76,9 +81,9 @@ class DataSource:
                 nchannels, nx, ny = img.shape
                 img = np.reshape(img, (nx, ny, nchannels))
                 img = Image.fromarray(np.uint8(img))
-                img = img.resize((128, 128), Image.ANTIALIAS)
+                img = img.resize((64, 64), Image.ANTIALIAS)
                 img = np.expand_dims(np.array(img.convert('L')), axis=2)
-                data_batch[j,:,t,:,:] = np.reshape(img/255.0, (1, 128, 128))
+                data_batch[j,:,t,:,:] = np.reshape(img/img.max(), (1, 64, 64))
             j+=1
         return data_batch
 

@@ -1,3 +1,4 @@
+
 from chainer import Chain, ChainList
 from CGRU import CGRU2D
 import chainer.links as L
@@ -13,22 +14,18 @@ from chainer import Variable
 DEBUG = False
 class APCModel(Chain):
 
-    def __init__(self, nhidden, nout, nlayers=1, device=-1):
+    def __init__(self, nout, nlayers=1, fsize=(15, 15), device=-1):
         """
-        :param nhidden: number of hidden channels
         :param nout: number of output (image) channels
-        :param nlayers: legacy variable
+        :param nlayers: number of layers in the network
+        :param fsize: size of the fovea (default (rx=15, ry=15))
+        :param device: device id to push to the model on
         """
         super().__init__()
         # check availability of gpu
         if device > -1:
             device =self. _check_gpu(device)
-        
         self.nlayers = nlayers
-        self.nhidden = nhidden # hidden dimensionality
-        self.gru_units = 1024 #nhidden*nhidden
-        self.l_units = 1024 #nhidden*nhidden
-        self.channels = 1 
         
         # identifies device id
         self.device_id = device
@@ -38,26 +35,50 @@ class APCModel(Chain):
         self.periphery = None
 
         # radius of pixels for foveal representation
-        self.rx = 15
-        self.ry = 15
+        self.rx = fsize[0]
+        self.ry = fsize[1]
 
         # blurring using average pooling
         self.blur = 11
-
-        with self.init_scope():
-            self.conv1 = L.Convolution2D(in_channels=None, out_channels=64, ksize=3, pad=int((3-1)/2))
-            self.conv2 =  L.Convolution2D(in_channels=None, out_channels=64, ksize=3, pad=int((3-1)/2))
-            self.conv3 = L.Convolution2D(in_channels=None, out_channels=64, ksize=3, pad=int((3-1)/2))
-            self.conv4 = L.Convolution2D(in_channels=None, out_channels=64, ksize=3, pad=int((3-1)/2))
-            self.conv5 = L.Convolution2D(in_channels=None, out_channels=64, ksize=3, pad=int((3-1)/2))
-            self.l1 = L.Linear(in_size=None, out_size=self.l_units)
-            self.gru = L.GRU(in_size=None, out_size=self.gru_units)
-            self.l2 = L.Linear(in_size=None, out_size=self.l_units)
-            self.deconv1 = L.Deconvolution2D(in_channels=None, out_channels=64, ksize=3, pad=int((3-1)/2))
-            self.deconv2 = L.Deconvolution2D(in_channels=None, out_channels=64, ksize=3, pad=int((3-1)/2))
-            self.deconv3 = L.Deconvolution2D(in_channels=None, out_channels=64, ksize=3, pad=int((3-1)/2))
-            self.deconv4 = L.Deconvolution2D(in_channels=None, out_channels=64, ksize=3, pad=int((3-1)/2))
-            self.deconv5 = L.Deconvolution2D(in_channels=None, out_channels=1, ksize=3, pad=int((3-1)/2))
+       
+        with self.init_scope(): 
+            self.conv, self.deconv = ChainList(), ChainList()
+            # initialize batch norm layers for conv and deconv layers
+            self.bn_conv, self.bn_deconv = ChainList(), ChainList()
+            for i in range(self.nlayers):
+                # specify outsize for deconv layer
+                outsize = (64 // (2**(self.nlayers - i - 1)), 64 // (2**(self.nlayers - i - 1)))
+                if i == 0: # deconv layer after gru
+                    # upsample from 1x1 gru output activations to 4x4 feature maps
+                    self.deconv.append(L.Deconvolution2D(in_channels=None,  \
+                                                         out_channels=((2**(self.nlayers - 1))*nout),  \
+                                                         ksize=4, outsize=outsize))
+                    self.bn_deconv.append(L.BatchNormalization((2**(self.nlayers - 1))*nout))
+                    self.conv.append(L.Convolution2D(in_channels=None, \
+                                                     out_channels=(2**i)*nout, ksize=4, stride=2, pad=int(1)))
+                    self.bn_conv.append(L.BatchNormalization((2**i)*nout))
+                    
+                elif i == self.nlayers - 1: # conv layer before gru & final deconv layer 
+                    # downsample to 1x1 feature maps 
+                    self.conv.append(L.Convolution2D(in_channels=None, out_channels=(2**i)*nout, ksize=4)) 
+                    self.bn_conv.append(L.BatchNormalization((2**i)*nout))
+                    # final layer should have 1 output channel, no batch normalization
+                    self.deconv.append(L.Deconvolution2D(in_channels=None, out_channels=1, ksize=4, \
+                                                          stride=2,  pad=int(1), outsize=outsize)) 
+                  
+                else:
+                    # normal conv & deconv layers: 
+                    self.conv.append(L.Convolution2D(in_channels=None, out_channels=(2**i)*nout, ksize=4, stride=2, pad=int(1)))
+                    self.bn_conv.append(L.BatchNormalization((2**i)*nout))
+                    
+                    self.deconv.append(L.Deconvolution2D(in_channels=None,  \
+                                                         out_channels=((2**(self.nlayers - 1 - i))*nout),  \
+                                                         ksize=4, stride=2, pad=int(1), outsize=outsize))
+                    self.bn_deconv.append(L.BatchNormalization(((2**(self.nlayers - 1 - i))*nout)))
+            
+            # GRU layer, output size will be number of feature maps of the final conv layer
+            self.gru = L.GRU(in_size=None, out_size=((self.nlayers - 1)**2)*nout)
+               
             
         self.optimizer = chainer.optimizers.Adam()  # other learning rate?
         self.optimizer.setup(self)
@@ -68,7 +89,6 @@ class APCModel(Chain):
         
     def _check_gpu(self, device):
         """
-        Check
         adapted from: https://www.programcreek.com/python/example/96830/chainer.cuda.check_cuda_available
         
 
@@ -77,14 +97,43 @@ class APCModel(Chain):
         """
 
         try:
+            import cupy as cp
             cuda.check_cuda_available()
+            cp.cuda.Device(device).use()
             return device
         # if gpu is not available, RuntimeError arises
         except RuntimeError:
-            print('Cuda backend not available, defaulting to cpu')
+            print('Cuda backend and/or cupy not available, defaulting to cpu')
             return -1 
         
-    def forward(self, x, pos):
+    def config_inp(self, x, pos, inp_config):
+        """
+        Determine what input the network gets
+        """
+        [nbatch, nchannels, nx, ny] = x.shape
+        if inp_config == 'fovea':
+            return self.fovea
+        elif inp_config =='fandp':
+            # add periphery to foveal input exp. cond. 2
+            for i in range(nbatch):
+                cx = pos[i,0]
+                cy = pos[i,1]
+                self.fovea[i,:,0:(cx - self.rx), :] = self.periphery[i,:,0:(cx - self.rx), :]
+                self.fovea[i,:,(cx + self.rx + 1):-1, :] = self.periphery[i,:,(cx + self.rx + 1):-1, :]
+                self.fovea[i,:,:, (cy+self.ry+1):-1] = self.periphery[i,:,:,(cy+self.ry+1):-1]
+                self.fovea[i,:,:, 0:(cy - self.ry)] = self.periphery[i,:,:,0:(cy - self.ry)]
+            return self.fovea 
+        
+        elif inp_config =='periphery':
+            # exp. cond. 3: set fovea equal to periphery
+            self.fovea = self.periphery
+            return self.fovea
+        elif inp_config == 'full':
+            # exp cond. 4: set fovea to full image
+            self.fovea = x
+            return self.fovea
+        
+    def forward(self, x, pos, inp_config='fovea'):
         [nbatch, nchannels, nx, ny] = x.shape
         # build up foveal input and foveal mask
         self.fovea = np.zeros([nbatch, nchannels, nx, ny]).astype(np.float32)
@@ -96,39 +145,34 @@ class APCModel(Chain):
             self.mask[i, :, (cx - self.rx):(cx + self.rx + 1), (cy - self.ry):(cy + self.ry + 1)] = 1
         # build up peripheral input
         self.periphery = F.average_pooling_2d(x.astype(np.float32), ksize=self.blur, pad=int((self.blur-1)/2), stride=1).data
-        
+       
+        self.fovea = self.config_inp(x, pos, inp_config)
         if self.device_id > -1: # put on gpu if enabled
             self.fovea = cuda.to_gpu(self.fovea)
-            self.periphery = cuda.to_gpu(self.periphery)
+            self.periphery = cuda.to_gpu(self.periphery)    
+        # forward pass over conv layers
+        conv = self.fovea
+        for i in range(self.nlayers):
+            conv = self.bn_conv[i](F.relu(self.conv[i](conv)))
             
-        # forward pass
+        # remove singletons from final conv layer and pass vector to GRU
+        # restore singleton dimensions after pass
+        gru_out = F.expand_dims(F.expand_dims(self.gru(F.squeeze(conv)), -1),-1)
         
-        # conv net
-        conv1 = F.relu(self.conv1(self.fovea))
-        conv2 = F.relu(self.conv2(conv1))
-        pool1 = F.max_pooling_2d(conv2, ksize=2, stride=2)
-        conv3 = F.relu(self.conv3(pool1))
-        conv4 = F.relu(self.conv4(conv3))
-        conv5 = F.relu(self.conv5(conv4))
-        pool2 = F.max_pooling_2d(conv5, ksize=2, stride=2)
-        l1 = F.relu(self.l1(pool2))
-        
-        # latent recurrent representation
-        gru = self.gru(l1)
-        
-        # deconv net
-        l2 = F.relu(self.l2(gru))
-        # reshape back into 4d tensor (nb, nc, nx, ny)
-        l2 = F.reshape(l2, (nbatch, self.channels,int(np.sqrt(self.l_units)), int(np.sqrt(self.l_units))))
-        deconv1 = F.relu(self.deconv1(l2))
-        deconv2 = F.relu(self.deconv2(deconv1))
-        unpool1 = F.unpooling_2d(deconv2, ksize=2, stride=2, cover_all=False)
-        deconv3 = F.relu(self.deconv3(unpool1))
-        deconv4 = F.relu(self.deconv4(deconv3))
-        deconv5 = F.relu(self.deconv5(deconv4))
-        unpool2 = F.unpooling_2d(deconv5, ksize=2, stride=2, cover_all=False)
+        # pass over deconv layers
+        deconv = gru_out
+        for i in range(self.nlayers):
+            if i == self.nlayers - 1:
+                # final deconv layer no batchnorm and sigmoid instead of relu
+                deconv = F.sigmoid(self.deconv[i](deconv))
+            else:
+                deconv = self.bn_deconv[i](F.relu(self.deconv[i](deconv)))
+                
+        # return reconstruction
+        return deconv
+
     
-        return unpool2
+        
     
 
 
@@ -251,7 +295,7 @@ class APCModel(Chain):
         self.a[5].relim()
         self.a[5].autoscale_view()
 
-    def train(self, ds_train, nepochs, ds_val=[], cutoff=None, fname=None):
+    def train(self, ds_train, nepochs, ds_val=[], cutoff=None, fname=None, inp_config='fovea'):
         """
         Trial-based training regime. Here we iterate for a fixed number of steps
 
@@ -260,7 +304,8 @@ class APCModel(Chain):
         :param cutoff:
         :return:
         """
-            
+        # get width & height
+        nx, ny = ds_train.data.shape[-2], ds_train.data.shape[-1]
         if cutoff is None:
             cutoff = ds_train.ntime
 
@@ -268,15 +313,9 @@ class APCModel(Chain):
         L_train, L_val = np.zeros(nepochs), np.zeros(nepochs)
         if DEBUG:
             self.init_graphics(shape=np.squeeze(np.moveaxis(ds_train.data[0, :, 0, ...], 0, -1)).shape)
-        # determine batchtes to process per epoch
-        #n_batches = 50 // ds_train.batch_size
-        #count_it = 0 # count the number of iterations
+   
         with chainer.using_config('train', True):
             for e in tqdm.trange(nepochs):
-                #count_it = 0 # count the number of iterations
-                # initialize & reset pos history & record predictions
-                #pos_history = np.zeros([len(ds.data),ds.ntime, ds.nbatch, 2]).astype(np.int)
-                #predictions = np.zeros([len(ds.data),ds.nbatch, ds.data.shape[1], ds.nx, ds.ny])
                 for i, x in enumerate(ds_train):
                     if self.device_id > -1:
                         loss = Variable(cuda.to_gpu(np.array([0.0]).astype(np.float32)))
@@ -287,7 +326,7 @@ class APCModel(Chain):
                     self.reset_state()
 
                     # sample initial positions
-                    pos = self.sample_position(mode='random', nx=ds_train.nx, ny=ds_train.ny, batch_size=ds_train.batch_size)
+                    pos = self.sample_position(mode='random', nx=nx, ny=ny, batch_size=ds_train.batch_size)
                     z = [None] * cutoff
                     idx = 0
             
@@ -299,20 +338,15 @@ class APCModel(Chain):
                         [nbatch,nchannels,nx,ny] = inputs.shape
                      
                         # compute predicted high-resolution internal representation from foveal and/or peripheral representations
-                        z[idx]= self(inputs, pos)
+                        z[idx]= self(inputs, pos, inp_config)
                         z_data = z[idx][0].data
                         z_data = cuda.to_cpu(z_data)
                         
-                        # record predictions, result will hold prediction after final saccade of the trial
-                        #predictions[i,:,:,:,:] = z_data
-                       
-                            
                         # minimize error between past and current represenation
                         if idx > 0:
                             foveal_error =  F.mean(F.absolute_error(z[idx - 1][self.mask], self.fovea[self.mask]))
                             loss += F.mean(foveal_error)
 
-                    
 
                         # get peripheral error
                         zb = F.average_pooling_2d(z[idx], ksize=self.blur, pad=int((self.blur - 1) / 2), stride=1)
@@ -351,20 +385,19 @@ class APCModel(Chain):
                      
                         # determine new position based on peripheral vision
                         pos = self.sample_position(mode='error', error=peripheral_error)
-                    #count_it+=1
-                    #if count_it == n_batches:
-                        #break
+
                 # normalize train loss
                 L_train[e] /= ds_train.batch_size * ds_train.nbatch
                 # compare final representation against fovea baseline
                 #MSE_f[e], MSE_m[e] = self.evaluate_patched_model(ds.data, predictions, pos_history)
-                self.validate(ds_val,L_val, e)
+                if ds_val != []:
+                    self.validate(ds_val, L_val, e)
 
 
                 if DEBUG:
                     self.update_graphics(np.arange(e + 1), L_train[:(e + 1)])
-                #if e % 5 == 0 and fname != None: # save model every 10 epochs
-                    #serializers.save_npz('../models/'+fname+'kitti_model_' + str(e), self)
+                if e % 5 == 0 and fname != None: # save model every 5 epochs
+                    serializers.save_npz('../models/'+fname+'model_' + inp_config+'_'+ str(e), self)
 
         
         return L_train, L_val 
@@ -375,6 +408,8 @@ class APCModel(Chain):
         to determine if the model learns to generalize
         """
         # compute validation error
+        nx, ny = ds_val.data.shape[-2], ds_val.data.shape[-1]
+
         with chainer.using_config('train', False):
             for i, x in enumerate(ds_val):
                 if self.device_id > -1:
@@ -386,7 +421,7 @@ class APCModel(Chain):
                 self.reset_state()
     
                 # sample initial positions
-                pos = self.sample_position(mode='random', nx=ds_val.nx, ny=ds_val.ny, batch_size=ds_val.batch_size)
+                pos = self.sample_position(mode='random', nx=nx, ny=ny, batch_size=ds_val.batch_size)
                 z = [None]*ds_val.ntime
                 idx = 0
                 
@@ -399,10 +434,11 @@ class APCModel(Chain):
                     z_data = z[idx][0].data
                     z_data = cuda.to_cpu(z_data)
                      
-                    # minimize error between past and current represenation
-                    if idx > 0:
-                        foveal_error =  F.mean(F.absolute_error(z[idx - 1][self.mask], self.fovea[self.mask]))
+
+                    for u in range(idx + 1):
+                        foveal_error = F.mean(F.absolute_error(z[u][self.mask], self.fovea[self.mask]))
                         loss += F.mean(foveal_error)
+                        
                     # get peripheral error
                     zb = F.average_pooling_2d(z[idx], ksize=self.blur, pad=int((self.blur - 1) / 2), stride=1)
                     peripheral_error = F.mean(F.absolute_error(zb, self.periphery), axis=1)
@@ -419,16 +455,19 @@ class APCModel(Chain):
         # normalize validation loss
         L_val[e] /= ds_val.batch_size * ds_val.nbatch
         
-    def test(self, ds_test):
+    def test(self, ds_test, category=None):
         """
         Method that passes over test data once
         """
         # compute test error
         total_loss = 0
         nexamples, nchannels, ntime, nx, ny = ds_test.data.shape
-        pred = np.zeros((nexamples, 1, ntime, 128, 128))
+        pred = np.zeros((nexamples, 1, ntime, nx, ny))
+        # compute test error
+        tradj_list = [] # list of trajectories (category, filenum, [(x,y)])        
         with chainer.using_config('train', False):
             for i, x in enumerate(ds_test):
+                pos_vec = [] # trajectory for a single examples
                 if self.device_id > -1:
                     loss = Variable(cuda.to_gpu(np.array([0.0]).astype(np.float32)))
                 else:
@@ -438,7 +477,8 @@ class APCModel(Chain):
                 self.reset_state()
     
                 # sample initial positions
-                pos = self.sample_position(mode='random', nx=ds_test.nx, ny=ds_test.ny, batch_size=ds_test.batch_size)
+                pos = self.sample_position(mode='random', nx=nx, ny=ny, batch_size=ds_test.batch_size)
+                pos_vec.append(pos)
                 z = [None]*ds_test.ntime
                 idx = 0
                 
@@ -461,7 +501,16 @@ class APCModel(Chain):
                     peripheral_error.to_cpu()
                 
                     idx += 1 
-                # determine new position based on peripheral vision
-                pos = self.sample_position(mode='error', error=peripheral_error)
+                    # determine new position based on peripheral vision
+                    pos = self.sample_position(mode='error', error=peripheral_error)
+                    pos_vec.append(pos)
+                # post process trajectories to account for batches
+                pos1, pos2, pos3, pos4 = [], [], [], []
+                for p in pos_vec:
+                    pos1.append(list(p[0]))
+                    pos2.append(list(p[1]))
+                    pos3.append(list(p[2]))
+                    pos4.append(list(p[3]))
+                tradj_list += [(category, pos1), (category, pos2), (category, pos3), (category, pos4)]
             total_loss += loss.data
-        return total_loss / (ds_test.nbatch * ds_test.batch_size), pred
+        return total_loss / (ds_test.nbatch * ds_test.batch_size), tradj_list

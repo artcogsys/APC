@@ -12,22 +12,23 @@ import os
 # import time
 
 import matplotlib.pyplot as plt
+from matplotlib import gridspec
 import hickle as hkl
 import time
 from datetime import datetime
 # device to run model on set to -1 to run on cpu
 device = -1
-nlayers=5
+nlayers=2
 
 #os.makedirs('../models/' + fname)
 # training parameters
-nepochs=50
+nepochs=10
 batch_size = 1
 samples_per_epoch = 50
 ntime = 10
 DATA_DIR = '../data/kitti_hkl/'
 
-test_file = os.path.join(DATA_DIR, 'X_val.hkl')
+test_file = os.path.join(DATA_DIR, 'X_test.hkl')
 #val_file = os.path.join(DATA_DIR, 'X_val.hkl')
 
 test_data = hkl.load(test_file)
@@ -43,29 +44,31 @@ test_source = DataSource(test_data, ntime=10, batch_size=batch_size)
 # set up width height 
 width, height = 128,128
 nhidden = height // (2*nlayers)
-model = APCModel(nhidden=nhidden, nout=32, nlayers=nlayers, device=device) # operating on grayscale
-serializers.load_npz('../models/kitti_model_80', model)
+model = APCModel(nhidden=nhidden, nout=16, nlayers=nlayers, device=device) # operating on grayscale
+serializers.load_npz('../models/kitti_model_110', model)
+L, L_val = model.train(test_source, nepochs=nepochs, ds_val = [], cutoff=ntime, fname='')
 
-loss, predicted = model.test(test_source)
- 
-
-print('average sequence test loss = ' + str(loss))
-
-
-
-w=10
-h=10
-fig=plt.figure(figsize=(8, 8))
-columns = 10
-rows = 2
-gt_data = test_source.preprocess([0])
-for i in range(1,columns):
-    gt_img = gt_data[0,0, i, ...]
-    fig.add_subplot(rows, columns, i)
-    plt.imshow(gt_img)
-    pred_img = predicted[0,:, i, ...] 
-    fig.add_subplot(rows, columns, i+columns)
-    plt.imshow(pred_img[0,...])
-   
-
-plt.show()
+#loss, predicted = model.test(test_source)
+# 
+#
+#print('average sequence test loss = ' + str(loss))
+#
+#gt_data = test_source.preprocess([0])
+#ncol = 10
+#nrow = 2
+#fig, ax = plt.subplots(nrow, ncol)
+#fig.set_size_inches((25,8))
+#ax = ax.flatten()
+#total = ncol*nrow
+#for i in range(total):
+#        if i < ncol: 
+#            gt_img = gt_data[0,0, i, ...]
+#            fig.add_subplot(nrow, ncol, i+1)
+#            plt.imshow(gt_img, interpolation="nearest", cmap='gray')
+#        else:
+#            pred_img = predicted[0,:, i % ncol, ...] 
+#            fig.add_subplot(nrow, ncol, i+1)
+#            plt.imshow(pred_img[0,...], interpolation="nearest", cmap='gray')
+#        ax[i].axis('off')
+#
+#plt.show()
